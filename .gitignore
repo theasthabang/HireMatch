@@ -1,0 +1,42 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Python virtual environment
+venv/
+.venv/
+env/
+
+# Temporary uploads
+backend/app/temp_uploads/
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# Frontend build
+dist/
+build/
+
+# Vite
+.vite/
+
+# VS Code
+.vscode/
+
+# IDE
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini

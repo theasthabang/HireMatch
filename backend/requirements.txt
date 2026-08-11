@@ -1,0 +1,8 @@
+# Backend dependencies
+fastapi
+uvicorn
+pydantic
+langchain
+pdfplumber
+python-docx
+
