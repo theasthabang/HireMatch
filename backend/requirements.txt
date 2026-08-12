@@ -3,6 +3,8 @@ fastapi
 uvicorn
 pydantic
 langchain
+langchain-groq
 pdfplumber
 python-docx
-
+python-dotenv
+httpx
