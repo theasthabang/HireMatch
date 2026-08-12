@@ -5,6 +5,7 @@ pydantic
 langchain
 langchain-groq
 pdfplumber
+python-multipart
 python-docx
 python-dotenv
 httpx
