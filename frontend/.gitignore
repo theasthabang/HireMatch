@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+ 
+# Build output
+dist/
+dist-ssr/
+ 
+# Env files (never commit real secrets)
+.env
+.env.local
+.env.*.local
+ 
+# Editor/OS
+.vscode/
+.DS_Store
+*.log
+ 
+# Vite cache
+.vite/
