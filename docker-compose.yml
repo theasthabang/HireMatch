@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8080"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - RAPIDAPI_KEY=${RAPIDAPI_KEY}
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - PORT=8080
+    volumes:
+      - ./backend/app:/app/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend

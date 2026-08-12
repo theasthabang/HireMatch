@@ -289,7 +289,7 @@ def get_fallback_indian_jobs(resume_text: str) -> list:
 # /reanalyze. It now lives in one place so a fix or API change only has to
 # happen once.
 # ---------------------------------------------------------------------------
-JSEARCH_URL = "https://jsearch.p.rapidapi.com/search"
+JSEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
 JSEARCH_RESULTS_PER_QUERY = 10  # was 5 — bigger pool so "Load More" has real inventory to reveal
 JSEARCH_MAX_RETRIES = 2        # per individual request, on 429/5xx only
 JSEARCH_RETRY_BASE_DELAY = 1.0  # seconds; doubles each retry (1s, 2s)
@@ -396,7 +396,7 @@ async def _jsearch_search_pass(client: httpx.AsyncClient, titles: list, headers:
     tasks = [
         _jsearch_request_with_retry(
             client,
-            params={"query": f"{title} in India", "num_pages": 1, "date_posted": date_posted},
+            params={"query": f"{title} in India", "num_pages": 1, "date_posted": date_posted, "country": "in"},
             headers=headers,
         )
         for title in titles
@@ -408,7 +408,11 @@ async def _jsearch_search_pass(client: httpx.AsyncClient, titles: list, headers:
         if not resp_json:
             continue
         data = resp_json.get("data", [])
-        for job in data[:JSEARCH_RESULTS_PER_QUERY]:
+        # search-v2 nests the actual job list under data["jobs"] instead of
+        # returning it directly as a list (that was the old /search shape).
+        # Handle both so this doesn't silently break again on a future API change.
+        jobs_list = data.get("jobs", []) if isinstance(data, dict) else data
+        for job in jobs_list[:JSEARCH_RESULTS_PER_QUERY]:
             job_city = job.get("job_city")
             job_country = job.get("job_country")
             loc_parts = [p for p in (job_city, job_country) if p]

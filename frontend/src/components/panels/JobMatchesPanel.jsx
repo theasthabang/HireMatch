@@ -311,6 +311,49 @@ export default function JobMatchesPanel({ data }) {
                       )}
                     </div>
 
+                    {/* Must-Have Skills — always visible, unlike the "Why this match?"
+                        detail below. Union of matched_requirements + missing_requirements,
+                        i.e. every requirement the LLM extracted from this specific posting,
+                        regardless of whether the candidate has it. */}
+                    {(() => {
+                      const matched = job.matched_requirements || [];
+                      const missing = job.missing_requirements || [];
+                      const allRequirements = [...matched, ...missing];
+                      if (allRequirements.length === 0) return null;
+                      const MAX_VISIBLE = 6;
+                      const visible = allRequirements.slice(0, MAX_VISIBLE);
+                      const extraCount = allRequirements.length - visible.length;
+                      return (
+                        <div className="space-y-1.5">
+                          <span className="text-[#99582a] text-[10px] font-bold uppercase tracking-wider">
+                            Must-Have Skills
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {visible.map((req, ri) => {
+                              const isMatched = matched.includes(req);
+                              return (
+                                <span
+                                  key={ri}
+                                  className={`px-2 py-0.5 rounded-md text-xs font-semibold border ${
+                                    isMatched
+                                      ? "bg-[#1a7a4a]/15 text-[#1a7a4a] border-[#1a7a4a]/30"
+                                      : "bg-[#6f1d1b] text-[#ffe6a7]/70 border-[#99582a]/40"
+                                  }`}
+                                >
+                                  {isMatched ? "✓ " : ""}{req}
+                                </span>
+                              );
+                            })}
+                            {extraCount > 0 && (
+                              <span className="px-2 py-0.5 rounded-md text-xs font-semibold text-[#99582a]">
+                                +{extraCount} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* Match Reasoning + Requirement Breakdown — expandable */}
                     {(job.match_why || (job.matched_requirements && job.matched_requirements.length > 0) || (job.missing_requirements && job.missing_requirements.length > 0)) && (
                       <div className="text-xs">
