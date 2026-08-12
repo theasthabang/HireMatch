@@ -39,12 +39,6 @@ So I built my own — with a React frontend, a FastAPI backend, and LangChain + 
 
 ---
 
-## Screenshots
-
-*(Add 3-4 screenshots here — the ATS score breakdown, job matches, and cover letter tab look the best. This is honestly the part that matters most for anyone skimming the repo, so don't skip it.)*
-
----
-
 ## Running it locally
 
 ### Backend
