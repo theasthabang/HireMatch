@@ -4,18 +4,24 @@ import logging
 import shutil
 import asyncio
 import time
+import re
 import httpx
 from datetime import datetime, timezone
-from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from typing import Optional, List
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, ValidationError
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.extractor import extract_text, assess_parse_confidence
 from app.chains import run_all_chains, score_job_matches, answer_ats_followup
 from app.models import AnalysisResponse, AtsFollowupRequest, AtsFollowupResponse, FeedbackRequest, FeedbackResponse
 from app.calibration import apply_calibration
 from app.feedback import log_feedback
+from app.resume_export import build_resume_docx
 
 # Setup logger
 logging.basicConfig(
@@ -30,6 +36,24 @@ app = FastAPI(
     version="1.0.0",
     description="API for parsing resumes (PDF/DOCX) and running parallel LLM analysis chains (ATS, Skills, Jobs, Rewrite)."
 )
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+# There's no auth/user concept in this API, so per-IP limiting is the only
+# practical guard against something (a misbehaving client, a scraper, or
+# someone who got hold of a stale API base URL) burning through the Groq/
+# RapidAPI quota. Limits are intentionally generous for normal use but tight
+# enough to make abuse expensive. Override via env vars per deployment if
+# these defaults don't fit (e.g. a shared demo instance vs. a single-user
+# local setup).
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+ANALYZE_RATE_LIMIT = os.getenv("ANALYZE_RATE_LIMIT", "5/minute")
+FOLLOWUP_RATE_LIMIT = os.getenv("FOLLOWUP_RATE_LIMIT", "20/minute")
+FEEDBACK_RATE_LIMIT = os.getenv("FEEDBACK_RATE_LIMIT", "30/minute")
 
 # CORS Configuration
 # NOTE: allow_origins=["*"] combined with allow_credentials=True is both invalid
@@ -122,12 +146,17 @@ async def debug_jsearch_status(live_test: bool = False):
         async with httpx.AsyncClient() as client:
             raw_resp = await client.get(
                 JSEARCH_URL,
-                params={"query": "Software Developer in India", "num_pages": 1, "date_posted": "month"},
+                params={"query": "Software Developer in India", "num_pages": 1, "country": "in", "date_posted": "month"},
                 headers={"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": "jsearch.p.rapidapi.com"},
                 timeout=10.0,
             )
             raw_status_code = raw_resp.status_code
-            raw_body_snippet = raw_resp.text[:500]
+            # 500 chars was cutting off before even one full job object,
+            # which is exactly the data that mattered when diagnosing the
+            # search-v2 nesting bug — bumped so future schema drift is
+            # actually visible here instead of requiring a second manual
+            # curl/Postman call to see past the truncation point.
+            raw_body_snippet = raw_resp.text[:3000]
     except Exception as e:
         raw_body_snippet = f"Raw diagnostic call itself failed: {e}"
 
@@ -289,7 +318,7 @@ def get_fallback_indian_jobs(resume_text: str) -> list:
 # /reanalyze. It now lives in one place so a fix or API change only has to
 # happen once.
 # ---------------------------------------------------------------------------
-JSEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
+JSEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"  # was /search — RapidAPI renamed this endpoint
 JSEARCH_RESULTS_PER_QUERY = 10  # was 5 — bigger pool so "Load More" has real inventory to reveal
 JSEARCH_MAX_RETRIES = 2        # per individual request, on 429/5xx only
 JSEARCH_RETRY_BASE_DELAY = 1.0  # seconds; doubles each retry (1s, 2s)
@@ -391,12 +420,46 @@ async def _jsearch_request_with_retry(client: httpx.AsyncClient, params: dict, h
     return None
 
 
+# Experience qualifiers the `jobs` chain is instructed to add for
+# entry-level/junior candidates (see JOBS_SYSTEM_PROMPT's QUERY GENERATION
+# RULES in chains.py) — e.g. "Full Stack Developer fresher". These make the
+# query more *precise* about what the candidate can realistically apply to,
+# but they also make it a stricter AND-match against a real job board's
+# search index. "fresher" in particular is an Indian-hiring-market term that
+# isn't as universally indexed as "intern"/"entry level" — a title qualified
+# this way can legitimately return 0 live results in a given week/month
+# window even though broader postings for the same underlying role exist.
+_EXPERIENCE_QUALIFIER_PATTERN = re.compile(
+    r"\b(fresher|freshers|entry[\s-]?level|graduate trainee|intern(?:ship)?|junior)\b",
+    re.IGNORECASE,
+)
+
+
+def _broaden_query(title: str) -> str:
+    """
+    Strips experience qualifiers from a search title, collapsing extra
+    whitespace and any separator punctuation left dangling behind (e.g.
+    "Graduate Trainee - Data Analyst" -> "Data Analyst", not "- Data
+    Analyst"). Used as a last-resort broader search tier — see
+    fetch_live_jobs()'s three-tier fallback below. Returns the original
+    title unchanged if no qualifier was found (so the caller can skip a
+    redundant identical retry).
+    """
+    broadened = _EXPERIENCE_QUALIFIER_PATTERN.sub("", title)
+    # Collapse now-dangling separators (a leftover "-", "–", "," etc. from a
+    # qualifier that was joined onto the rest of the title with one) at the
+    # start/end of the string, then any resulting extra whitespace.
+    broadened = re.sub(r"^[\s\-–,]+|[\s\-–,]+$", "", broadened)
+    broadened = re.sub(r"\s{2,}", " ", broadened).strip()
+    return broadened or title
+
+
 async def _jsearch_search_pass(client: httpx.AsyncClient, titles: list, headers: dict, date_posted: str) -> list:
     """One pass of querying all titles concurrently for a given date_posted window."""
     tasks = [
         _jsearch_request_with_retry(
             client,
-            params={"query": f"{title} in India", "num_pages": 1, "date_posted": date_posted, "country": "in"},
+            params={"query": f"{title} in India", "num_pages": 1, "country": "in", "date_posted": date_posted},
             headers=headers,
         )
         for title in titles
@@ -407,12 +470,49 @@ async def _jsearch_search_pass(client: httpx.AsyncClient, titles: list, headers:
     for resp_json in responses:
         if not resp_json:
             continue
-        data = resp_json.get("data", [])
-        # search-v2 nests the actual job list under data["jobs"] instead of
-        # returning it directly as a list (that was the old /search shape).
-        # Handle both so this doesn't silently break again on a future API change.
-        jobs_list = data.get("jobs", []) if isinstance(data, dict) else data
-        for job in jobs_list[:JSEARCH_RESULTS_PER_QUERY]:
+
+        raw_data = resp_json.get("data", [])
+        # search-v2 nests results one level deeper than the older /search
+        # endpoint did: {"data": {"jobs": [...], "cursor": "..."}} instead of
+        # {"data": [...]}. This was the actual root cause of every "0 live
+        # jobs" result up to now — real jobs were being fetched successfully
+        # every time (see /debug/jsearch's raw_http_status: 200), then
+        # silently discarded here because the old code expected `data`
+        # itself to be the list. Handle both shapes so a future endpoint
+        # change (or a fallback to /search) degrades gracefully instead of
+        # breaking the same way again.
+        if isinstance(raw_data, dict):
+            job_list = raw_data.get("jobs", [])
+        elif isinstance(raw_data, list):
+            job_list = raw_data
+        else:
+            job_list = None
+
+        if not isinstance(job_list, list):
+            logger.warning(
+                f"JSearch response had an unrecognized 'data' shape (got {type(raw_data).__name__}: "
+                f"{str(raw_data)[:200]!r}) — skipping this response. If this keeps happening, check "
+                f"GET /debug/jsearch?live_test=true for the current raw response shape."
+            )
+            continue
+
+        for job in job_list[:JSEARCH_RESULTS_PER_QUERY]:
+            if not isinstance(job, dict):
+                continue
+
+            # Safety net for the *inner* job object's field names, not just
+            # the outer envelope: if the fields this code expects (job_title
+            # etc.) are ever renamed too, log it clearly instead of silently
+            # appending a job with every field blank — that failure mode is
+            # exactly what happened with the outer envelope and took a
+            # manual debug session to catch.
+            if "job_title" not in job and "job_id" in job:
+                logger.warning(
+                    f"JSearch job object (id={job.get('job_id')}) is missing expected field 'job_title'. "
+                    f"Available keys: {list(job.keys())[:15]}. The job schema may have changed again — "
+                    f"check GET /debug/jsearch?live_test=true."
+                )
+
             job_city = job.get("job_city")
             job_country = job.get("job_country")
             loc_parts = [p for p in (job_city, job_country) if p]
@@ -436,10 +536,14 @@ async def _jsearch_search_pass(client: httpx.AsyncClient, titles: list, headers:
 async def fetch_live_jobs(search_queries: list) -> tuple:
     """Fetches live job postings from the JSearch API for up to 3 search queries.
 
-    Two-tier freshness fallback: tries the last week first; if that yields
-    nothing (a common outcome for niche/entry-level queries), retries with
-    the last month before giving up. Each individual request also retries on
-    429/5xx with exponential backoff before being treated as failed.
+    Three-tier freshness/breadth fallback: tries the last week first; if that
+    yields nothing (a common outcome for niche/entry-level queries), retries
+    with the last month; if that still yields nothing, retries once more with
+    experience qualifiers ("fresher", "intern", "junior", etc.) stripped from
+    the titles — see _broaden_query()'s docstring for why that's a legitimate
+    last resort rather than a lower-quality result. Each individual request
+    also retries on 429/5xx with exponential backoff before being treated as
+    failed.
 
     :return: (jobs: list, status: str, message: str) — never raises. status is
         one of: "live", "fallback_no_api_key", "fallback_no_results",
@@ -470,11 +574,29 @@ async def fetch_live_jobs(search_queries: list) -> tuple:
                 logger.info("JSearch: 'past week' returned 0 results. Retrying with 'past month'...")
                 jobs = await _jsearch_search_pass(client, titles, headers, date_posted="month")
 
+            if not jobs:
+                # Third and final tier: strip experience qualifiers ("fresher",
+                # "intern", "junior", etc — see _broaden_query's docstring) and
+                # retry once more against the widest window. This exists
+                # specifically for entry-level/fresher profiles, where the
+                # qualifier-included query is precise but can be too strict an
+                # AND-match for a real job board's search index to return
+                # anything, even when broader postings for the same role exist.
+                broadened_titles = list({_broaden_query(t) for t in titles})
+                if broadened_titles != titles:
+                    logger.info(
+                        f"JSearch: 'past month' returned 0 results with qualified titles. "
+                        f"Retrying with broadened titles: {broadened_titles}..."
+                    )
+                    jobs = await _jsearch_search_pass(client, broadened_titles, headers, date_posted="month")
+                    if jobs:
+                        logger.info(f"JSearch: broadened-title retry succeeded with {len(jobs)} listings.")
+
             if jobs:
                 logger.info(f"JSearch: succeeded with {len(jobs)} live listings.")
                 return jobs, "live", f"{len(jobs)} live listings found."
             else:
-                logger.warning("JSearch: both 'week' and 'month' searches returned 0 results.")
+                logger.warning("JSearch: 'week', 'month', and broadened-title searches all returned 0 results.")
                 return [], "fallback_no_results", "No live postings found for your profile in the last month. Showing example listings."
 
     except Exception as jsearch_err:
@@ -616,13 +738,18 @@ async def run_analysis_pipeline(resume_text: str, filename: str = None, job_desc
 
     try:
         logger.info(f"Executing LLM analysis chains (tailored={bool(job_description)})...")
-        analysis_results = await run_all_chains(resume_text, job_description=job_description)
+        analysis_results, was_rate_limited = await run_all_chains(resume_text, job_description=job_description)
     except Exception as chain_err:
         logger.error(f"Critical error during LLM analysis: {chain_err}", exc_info=True)
         raise HTTPException(status_code=500, detail="An error occurred while communicating with the LLM provider.")
 
     if all(val is None for val in analysis_results.values()):
-        logger.error("All LLM analysis chains returned None/failed.")
+        logger.error(f"All LLM analysis chains returned None/failed. Rate limited: {was_rate_limited}")
+        if was_rate_limited:
+            raise HTTPException(
+                status_code=503,
+                detail="The AI provider's rate limit was hit while analyzing your resume — this happens under heavy load, not because of a config problem. Please wait a minute and try again."
+            )
         raise HTTPException(
             status_code=500,
             detail="All LLM analysis chains failed. Please check your Groq API configuration and try again."
@@ -656,7 +783,20 @@ async def run_analysis_pipeline(resume_text: str, filename: str = None, job_desc
     if job_description:
         analysis_results["tailored_for"] = job_description[:160] + ("..." if len(job_description) > 160 else "")
 
-    return AnalysisResponse(**analysis_results)
+    # A chain can return JSON that parses fine but doesn't satisfy its
+    # Pydantic model — e.g. the LLM omits a required field like ATSResult.score
+    # after a partial/truncated response that still passed _parse_json_safe.
+    # Without this guard, that surfaces as an unhandled ValidationError (a
+    # raw 500 with no useful detail) instead of the same kind of clear,
+    # actionable error every other failure mode in this file already returns.
+    try:
+        return AnalysisResponse(**analysis_results)
+    except ValidationError as val_err:
+        logger.error(f"LLM output failed response schema validation: {val_err}", exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="The AI provider returned an unexpected response format. Please try again."
+        )
 
 
 class ReanalyzeRequest(BaseModel):
@@ -668,9 +808,16 @@ class ReanalyzeRequest(BaseModel):
 
 
 @app.post("/reanalyze", response_model=AnalysisResponse)
-async def reanalyze_resume(request: ReanalyzeRequest):
-    """Reanalyzes updated resume text, running LLM chains and live job search."""
-    resume_text = request.resume_text
+@limiter.limit(ANALYZE_RATE_LIMIT)
+async def reanalyze_resume(request: Request, body: ReanalyzeRequest):
+    """Reanalyzes updated resume text, running LLM chains and live job search.
+
+    Note: the endpoint now takes both a starlette `Request` (required by the
+    slowapi rate-limit decorator to key off the caller's IP) and the parsed
+    Pydantic `body` — FastAPI still validates `body` against ReanalyzeRequest
+    exactly as before, this is purely additive.
+    """
+    resume_text = body.resume_text
     if not resume_text or len(resume_text.strip()) < 100:
         raise HTTPException(
             status_code=422,
@@ -678,13 +825,14 @@ async def reanalyze_resume(request: ReanalyzeRequest):
         )
 
     logger.info(f"Received reanalyze request for text length: {len(resume_text)}")
-    result = await run_analysis_pipeline(resume_text, job_description=request.job_description)
+    result = await run_analysis_pipeline(resume_text, job_description=body.job_description)
     logger.info("Re-analysis completed successfully.")
     return result
 
 
 @app.post("/analyze", response_model=AnalysisResponse)
-async def analyze_resume(file: UploadFile = File(...), job_description: Optional[str] = Form(None)):
+@limiter.limit(ANALYZE_RATE_LIMIT)
+async def analyze_resume(request: Request, file: UploadFile = File(...), job_description: Optional[str] = Form(None)):
     """Receives resume file, extracts text, and runs LLM analysis chains in parallel.
 
     :param job_description: Optional target job description pasted alongside the file upload.
@@ -735,20 +883,21 @@ async def analyze_resume(file: UploadFile = File(...), job_description: Optional
 
 
 @app.post("/ats/ask", response_model=AtsFollowupResponse)
-async def ask_about_score(request: AtsFollowupRequest):
+@limiter.limit(FOLLOWUP_RATE_LIMIT)
+async def ask_about_score(request: Request, body: AtsFollowupRequest):
     """
     'Ask about my score' follow-up chat. Stateless — the client sends the
     ATS result it already has on screen plus a short running history each
     turn, so no session storage is needed on the backend. See
     answer_ats_followup() in chains.py for the actual chain call.
     """
-    logger.info(f"Received ATS follow-up question (history length: {len(request.history)}).")
+    logger.info(f"Received ATS follow-up question (history length: {len(body.history)}).")
 
     answer = await answer_ats_followup(
-        ats_summary=request.ats_summary,
-        question=request.question,
-        resume_text=request.resume_text,
-        history=[turn.model_dump() for turn in request.history],
+        ats_summary=body.ats_summary,
+        question=body.question,
+        resume_text=body.resume_text,
+        history=[turn.model_dump() for turn in body.history],
     )
 
     if answer is None:
@@ -761,21 +910,95 @@ async def ask_about_score(request: AtsFollowupRequest):
 
 
 @app.post("/feedback", response_model=FeedbackResponse)
-async def submit_feedback(request: FeedbackRequest):
+@limiter.limit(FEEDBACK_RATE_LIMIT)
+async def submit_feedback(request: Request, body: FeedbackRequest):
     """
     Records a thumbs up/down on any specific AI-generated suggestion (an ATS
     tip, an interview question, etc.). Fire-and-forget from the frontend's
     perspective — logging failures don't surface as request failures since
     feedback is inherently best-effort.
     """
-    if request.rating not in ("up", "down"):
+    if body.rating not in ("up", "down"):
         raise HTTPException(status_code=422, detail="rating must be 'up' or 'down'.")
 
     log_feedback(
-        feature=request.feature,
-        rating=request.rating,
-        item_id=request.item_id,
-        comment=request.comment,
-        context=request.context,
+        feature=body.feature,
+        rating=body.rating,
+        item_id=body.item_id,
+        comment=body.comment,
+        context=body.context,
     )
     return FeedbackResponse(status="ok")
+
+
+class ResumeExportRequest(BaseModel):
+    """
+    Request body for POST /export/resume. Deliberately takes exactly the
+    content the client already has on screen (accepted summary + bullets)
+    rather than re-deriving anything server-side — the export is a rendering
+    of what the user reviewed and accepted in the Rewrite panel, not a new
+    AI generation step, so nothing here should silently diverge from what
+    they saw.
+    """
+    full_name: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Candidate's name for the document header, if known. Purely cosmetic — omit to export without a name line."
+    )
+    contact_line: Optional[str] = Field(
+        default=None,
+        max_length=300,
+        description="Optional single line of contact info (email / phone / location) shown under the name."
+    )
+    summary: Optional[str] = Field(
+        default=None,
+        max_length=4000,
+        description="The optimized professional summary text to include."
+    )
+    bullets: List[str] = Field(
+        default_factory=list,
+        max_length=100,
+        description="Accepted bullet text, in display order — exactly what the user has already accepted/edited client-side."
+    )
+
+
+@app.post("/export/resume")
+@limiter.limit(FEEDBACK_RATE_LIMIT)
+async def export_resume(request: Request, body: ResumeExportRequest):
+    """
+    Renders the user's accepted rewrite content (summary + bullets) as a
+    single-column, ATS-safe .docx and streams it back for download.
+
+    No LLM call happens here — this is a pure rendering step over content
+    the user already reviewed in the Rewrite panel, so it's fast, free, and
+    can't introduce any new fabricated content. See resume_export.py for the
+    formatting rules chosen to keep the output ATS-parser-friendly.
+    """
+    if not body.summary and not body.bullets:
+        raise HTTPException(
+            status_code=422,
+            detail="Nothing to export — provide at least a summary or one bullet."
+        )
+
+    try:
+        buffer = build_resume_docx(
+            full_name=body.full_name,
+            contact_line=body.contact_line,
+            summary=body.summary,
+            bullets=body.bullets,
+        )
+    except Exception as export_err:
+        logger.error(f"Resume export failed: {export_err}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate the resume document. Please try again.")
+
+    filename = "resume.docx"
+    if body.full_name:
+        safe_name = "".join(c for c in body.full_name if c.isalnum() or c in (" ", "_", "-")).strip()
+        if safe_name:
+            filename = f"{safe_name.replace(' ', '_')}_Resume.docx"
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

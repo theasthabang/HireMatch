@@ -2,18 +2,12 @@ import React, { useState } from "react";
 import { submitFeedback } from "../api/client";
 
 /**
- * FeedbackButtons — a small, reusable thumbs up/down control for any
- * specific AI-generated suggestion (an ATS tip, an interview question,
- * etc.). Intentionally lightweight: no accounts, no threading — just a
- * rating plus an optional short comment, logged server-side for later review.
- *
- * @param {string} feature - Feature identifier, e.g. 'ats_tip', 'ats_overall', 'interview_question'.
- * @param {string} [itemId] - Identifier for the specific item within the feature.
- * @param {Object} [context] - Optional small snapshot of the item (e.g. its text) sent along for review.
- * @param {string} [className]
+ * FeedbackButtons — graded-paper system. Same behavior as before, rebuilt
+ * as quiet text-only marks (+ / ✕) instead of colored pill buttons, matching
+ * the restrained, single-accent visual language used everywhere else.
  */
 export default function FeedbackButtons({ feature, itemId, context, className = "" }) {
-  const [rating, setRating] = useState(null); // null | 'up' | 'down'
+  const [rating, setRating] = useState(null);
   const [showCommentBox, setShowCommentBox] = useState(false);
   const [comment, setComment] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -25,7 +19,6 @@ export default function FeedbackButtons({ feature, itemId, context, className = 
     setError(null);
 
     if (newRating === "down") {
-      // Give the user a chance to say what was wrong before sending.
       setShowCommentBox(true);
       return;
     }
@@ -50,7 +43,7 @@ export default function FeedbackButtons({ feature, itemId, context, className = 
 
   if (submitted) {
     return (
-      <span className={`text-[#99582a] text-[11px] font-semibold select-none ${className}`}>
+      <span className={`text-[#64748B] text-[11px] select-none ${className}`}>
         Thanks for the feedback
       </span>
     );
@@ -58,49 +51,41 @@ export default function FeedbackButtons({ feature, itemId, context, className = 
 
   return (
     <div className={`inline-flex flex-col gap-1.5 ${className}`}>
-      <div className="inline-flex items-center gap-1">
+      <div className="inline-flex items-center gap-3">
         <button
           type="button"
           onClick={() => handleRate("up")}
           title="Helpful"
-          className={`w-6 h-6 rounded-md flex items-center justify-center text-xs transition ${
-            rating === "up"
-              ? "bg-[#1a7a4a]/20 text-[#1a7a4a]"
-              : "text-[#99582a] hover:text-[#1a7a4a] hover:bg-[#1a7a4a]/10"
+          className={`text-[11px] font-medium transition ${
+            rating === "up" ? "text-[#0D9488]" : "text-[#64748B] hover:text-[#0D9488]"
           }`}
         >
-          👍
+          Helpful
         </button>
         <button
           type="button"
           onClick={() => handleRate("down")}
           title="Not helpful"
-          className={`w-6 h-6 rounded-md flex items-center justify-center text-xs transition ${
-            rating === "down"
-              ? "bg-[#c0392b]/20 text-[#c0392b]"
-              : "text-[#99582a] hover:text-[#c0392b] hover:bg-[#c0392b]/10"
+          className={`text-[11px] font-medium transition ${
+            rating === "down" ? "text-[#2563EB]" : "text-[#64748B] hover:text-[#2563EB]"
           }`}
         >
-          👎
+          Not helpful
         </button>
-        {error && <span className="text-[#c0392b] text-[10px] font-semibold">{error}</span>}
+        {error && <span className="text-[#2563EB] text-[10px] font-medium">{error}</span>}
       </div>
 
       {showCommentBox && (
-        <div className="flex items-center gap-1.5 animate-fadeIn">
+        <div className="flex items-center gap-2 animate-fadeIn">
           <input
             type="text"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSubmitDown()}
             placeholder="What was wrong? (optional)"
-            className="text-[11px] bg-[#6f1d1b] border border-[#99582a] focus:border-[#bb9457] rounded-md px-2 py-1 text-[#ffe6a7] outline-none w-40 placeholder:text-[#99582a]/70"
+            className="text-[11px] bg-transparent border-b border-[#E2E8F0] focus:border-[#0F172A] px-0.5 py-1 text-[#0F172A] outline-none w-44 placeholder:text-[#64748B]/60"
           />
-          <button
-            type="button"
-            onClick={handleSubmitDown}
-            className="text-[10px] font-bold text-[#bb9457] hover:text-[#ffe6a7] transition"
-          >
+          <button type="button" onClick={handleSubmitDown} className="text-[10px] font-semibold text-[#0F172A] hover:text-[#2563EB] transition">
             Send
           </button>
         </div>

@@ -10,75 +10,45 @@ import { reanalyzeResume } from "../api/client";
 import { loadJSON, saveJSON, removeKey, STORAGE_KEYS } from "../utils/storage";
 
 /**
- * Dashboard component displaying the split-screen view.
- *
- * Session persistence: results, resumeText, jobDescription, roadmap
- * checklist progress, and the active tab are all persisted to localStorage
- * under STORAGE_KEYS.SESSION so a page refresh doesn't lose them — this
- * previously lived only in useState and vanished on every reload, which
- * quietly defeated the point of the 90-day roadmap checklist.
- *
- * @param {Object} props
- * @param {Function} props.onReset - Callback to return to the HeroPage.
+ * Dashboard — graded-paper design system, split-screen structure kept
+ * (sidebar + tabs, per explicit direction), rebuilt with the new tokens:
+ * Paper #F8FAFC, Ink #0F172A, Graphite #64748B, Primary Blue #2563EB (one
+ * accent only), Hairline #E2E8F0. Fraunces for headings, Inter for body,
+ * IBM Plex Mono for data/labels. All state/logic identical to before —
+ * this is a visual + component-craft rebuild, not a functional change.
  */
 export default function Dashboard({ onReset }) {
-  // Lazy initializers: read persisted session once on first mount, not on
-  // every render.
   const [results, setResults] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.results ?? null);
   const [activeTab, setActiveTab] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.activeTab ?? "ats");
   const [loading, setLoading] = useState(false);
   const [resumeText, setResumeText] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.resumeText ?? "");
   const [showToast, setShowToast] = useState(false);
-  // Lifted here (not local to Upload) so the same JD can be reused on
-  // /reanalyze calls without the user retyping it.
   const [jobDescription, setJobDescription] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.jobDescription ?? "");
-  // Lifted out of SkillGapsPanel so it persists with everything else instead
-  // of resetting to [] on every refresh.
   const [completedWeeks, setCompletedWeeks] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.completedWeeks ?? []);
-  // Snapshot of the ATS score right before a re-analyze, so the delta can be
-  // shown once the new result comes back ("62 -> 78"). Intentionally not
-  // persisted across reloads — it's only meaningful right after an in-session
-  // re-analyze action.
   const [previousAtsScore, setPreviousAtsScore] = useState(null);
   const [scoreDelta, setScoreDelta] = useState(null);
 
-  // Persist the session on every relevant change. Debounce-free is fine here
-  // since these are all low-frequency state changes (uploads, reanalyzes,
-  // checklist toggles), not per-keystroke.
   useEffect(() => {
-    saveJSON(STORAGE_KEYS.SESSION, {
-      results,
-      resumeText,
-      jobDescription,
-      completedWeeks,
-      activeTab,
-    });
+    saveJSON(STORAGE_KEYS.SESSION, { results, resumeText, jobDescription, completedWeeks, activeTab });
   }, [results, resumeText, jobDescription, completedWeeks, activeTab]);
 
   const handleResult = (data, filename) => {
     setResults(data);
     setResumeText(data?.resume_text || "");
-    // A genuinely new resume upload means a new roadmap — carrying over
-    // checkmarks from a previous, unrelated resume would be misleading.
     setCompletedWeeks([]);
     setPreviousAtsScore(null);
     setScoreDelta(null);
   };
 
-  const handleResumeUpdate = (updatedText) => {
-    setResumeText(updatedText);
-  };
+  const handleResumeUpdate = (updatedText) => setResumeText(updatedText);
 
   const handleReAnalyze = async (updatedText) => {
     setShowToast(true);
-    // Snapshot the current score before the new result overwrites it, so we
-    // can compute a delta once the response arrives.
     const scoreBefore = results?.ats?.score;
     try {
       const response = await reanalyzeResume(updatedText, jobDescription);
       setResults(response);
       setResumeText(response?.resume_text || updatedText);
-
       const scoreAfter = response?.ats?.score;
       if (typeof scoreBefore === "number" && typeof scoreAfter === "number") {
         setPreviousAtsScore(scoreBefore);
@@ -112,7 +82,7 @@ export default function Dashboard({ onReset }) {
     { id: "ats", name: "ATS Score" },
     { id: "skills", name: "Skill Gaps" },
     { id: "jobs", name: "Job Matches" },
-    { id: "rewrite", name: "Optimized Rewrite" },
+    { id: "rewrite", name: "Rewrite" },
     { id: "cover_letter", name: "Cover Letter" },
     { id: "interview", name: "Interview Prep" },
   ];
@@ -152,82 +122,56 @@ export default function Dashboard({ onReset }) {
     }
   };
 
-  // Stat computations
-  const atsScore = results?.ats?.score !== undefined ? `${results.ats.score}%` : "—";
-  const skillsCount = results?.skills?.strong_skills?.length !== undefined ? results.skills.strong_skills.length : "—";
-  const jobsCount = results?.jobs?.matches?.length !== undefined ? results.jobs.matches.length : "—";
+  const atsScore = results?.ats?.score !== undefined ? results.ats.score : null;
+  const skillsCount = results?.skills?.strong_skills?.length !== undefined ? results.skills.strong_skills.length : null;
+  const jobsCount = results?.jobs?.matches?.length !== undefined ? results.jobs.matches.length : null;
+
+  const serif = { fontFamily: "'Fraunces', serif" };
+  const mono = { fontFamily: "'IBM Plex Mono', monospace" };
 
   return (
-    <div className="min-h-screen bg-[#6f1d1b] flex flex-col md:grid md:grid-cols-[420px_1fr] text-[#ffe6a7] font-sans">
-      
-      {/* Left Panel - Fixed width 420px, background #432818, border right #99582a */}
-      <aside className="w-full md:w-[420px] bg-[#432818] border-b md:border-b-0 md:border-r border-[#99582a] p-6 flex flex-col justify-between flex-shrink-0 md:min-h-screen">
-        <div className="space-y-4">
-          
-          {/* Group 1 — Header */}
-          <div className="space-y-1.5">
-            {/* Back button */}
-            <button
-              onClick={onReset}
-              className="flex items-center space-x-2 text-xs font-bold text-[#bb9457] hover:text-[#ffe6a7] transition focus:outline-none"
-            >
-              <span>← New Analysis</span>
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col md:grid md:grid-cols-[260px_1fr] text-[#0F172A] font-sans">
+
+      <aside
+        className="w-full md:w-[260px] border-b md:border-b-0 md:border-r border-[#E2E8F0] px-7 py-8 flex flex-col justify-between flex-shrink-0 md:min-h-screen"
+        style={{ background: "linear-gradient(180deg, #EFF6FF 0%, #F8FAFC 220px)" }}
+      >
+        <div className="space-y-8">
+
+          <div className="space-y-4">
+            <button onClick={onReset} className="flex items-center gap-1.5 text-xs font-medium text-[#64748B] hover:text-[#2563EB] transition">
+              <span>← New analysis</span>
             </button>
-
-            {/* Logo */}
-            <div className="flex items-center space-x-2">
-              <span className="bg-[#bb9457] text-[#432818] w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black shadow-sm">IQ</span>
-              <span className="text-lg font-bold text-[#ffe6a7] tracking-tight">ResumeIQ</span>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 bg-[#2563EB] flex-shrink-0" />
+              <div className="text-lg font-medium text-[#0F172A]" style={serif}>HireMatch</div>
             </div>
           </div>
 
-          {/* Group 2 — Upload section */}
-          <div className="space-y-2.5">
+          <div className="space-y-3">
             <div>
-              <h3 className="text-lg font-extrabold text-[#ffe6a7]">Upload Resume</h3>
-              <p className="text-[#99582a] text-[11px] font-semibold mt-0.5">
-                Select or drop your file to get started
-              </p>
+              <h3 className="text-sm font-semibold text-[#0F172A]">Upload resume</h3>
+              <p className="text-[#64748B] text-xs mt-0.5">PDF or DOCX, up to 5MB</p>
             </div>
-
-            {/* Upload Component */}
-            <Upload
-              onResult={handleResult}
-              onLoadingChange={setLoading}
-              jobDescription={jobDescription}
-              onJobDescriptionChange={setJobDescription}
-            />
+            <Upload onResult={handleResult} onLoadingChange={setLoading} jobDescription={jobDescription} onJobDescriptionChange={setJobDescription} />
           </div>
 
-          {/* Group 3 — System Status Card */}
-          <div className="bg-[#6f1d1b] border border-[#99582a] rounded-xl shadow-inner p-3.5 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-[#ffe6a7] uppercase tracking-wider">System Status</span>
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#432818] text-[#bb9457] border border-[#bb9457]/50">
-                LLaMA-3 70B
-              </span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <span className={`w-2 h-2 rounded-full ${loading ? "bg-[#bb9457] animate-pulse" : results ? "bg-[#bb9457]" : "bg-[#99582a]"}`} />
-              <span className="text-xs font-extrabold text-[#ffe6a7]">
-                {loading ? "Processing..." : results ? "Model Online" : "Awaiting Upload"}
+          <div className="space-y-2.5 border-t border-[#E2E8F0] pt-5">
+            <div className="flex items-center gap-2">
+              <span className={`w-1.5 h-1.5 rounded-full ${loading ? "bg-[#2563EB] animate-pulse" : results ? "bg-[#0D9488]" : "bg-[#E2E8F0]"}`} />
+              <span className="text-xs font-medium text-[#0F172A]">
+                {loading ? "Processing" : results ? "Model online" : "Awaiting upload"}
               </span>
             </div>
             {results?.is_tailored && (
-              <div className="flex items-start gap-1.5 pt-1 border-t border-[#99582a]/20 mt-1">
-                <span className="text-[#1a7a4a] text-xs leading-none mt-0.5">✓</span>
-                <p className="text-[#1a7a4a] text-[10px] font-semibold leading-snug">
-                  Tailored to: {results.tailored_for || "your pasted job description"}
-                </p>
-              </div>
+              <p className="text-[#64748B] text-[11px] leading-snug pl-3.5 border-l border-[#E2E8F0]">
+                Tailored to: {results.tailored_for || "your pasted job description"}
+              </p>
             )}
             {results && (
-              <div className="pt-1 border-t border-[#99582a]/20 mt-1 flex items-center justify-between">
-                <span className="text-[#99582a] text-[10px] font-semibold">Saved in this browser</span>
-                <button
-                  onClick={handleClearSavedAnalysis}
-                  className="text-[#99582a] hover:text-[#c0392b] text-[10px] font-bold underline decoration-dotted underline-offset-2 transition"
-                >
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[#64748B] text-[11px]">Saved in this browser</span>
+                <button onClick={handleClearSavedAnalysis} className="text-[#64748B] hover:text-[#2563EB] text-[11px] font-medium underline decoration-dotted underline-offset-2 transition">
                   Clear
                 </button>
               </div>
@@ -235,97 +179,66 @@ export default function Dashboard({ onReset }) {
           </div>
         </div>
 
-        {/* Group 4 — Bottom stats row */}
-        <div className="grid grid-cols-3 gap-2.5 mt-5">
-          <div className="bg-[#6f1d1b] border border-[#99582a]/30 rounded-xl p-2 text-center shadow-inner">
-            <p className="text-[#bb9457] text-lg font-black">
-              {atsScore}
+        <div className="grid grid-cols-3 border-t border-[#E2E8F0] pt-5 mt-8">
+          <div className="text-center border-r border-[#E2E8F0] relative">
+            <span className="absolute -top-[21px] left-1/2 -translate-x-1/2 w-6 h-[2px] bg-[#2563EB]" />
+            <p className="text-xl font-medium text-[#0F172A]" style={serif}>
+              {atsScore !== null ? atsScore : "—"}
               {typeof scoreDelta === "number" && scoreDelta !== 0 && (
-                <span className={`ml-1 text-xs font-black align-top ${scoreDelta > 0 ? "text-[#1a7a4a]" : "text-[#c0392b]"}`}>
+                <span className={`text-[10px] font-semibold ml-0.5 align-top ${scoreDelta > 0 ? "text-[#0D9488]" : "text-[#2563EB]"}`} style={mono}>
                   {scoreDelta > 0 ? `+${scoreDelta}` : scoreDelta}
                 </span>
               )}
             </p>
-            <p className="text-[#99582a] text-[9px] font-bold uppercase tracking-wider mt-0.5">ATS Score</p>
+            <p className="text-[#64748B] text-[9px] uppercase tracking-wide mt-0.5">Score</p>
           </div>
-          <div className="bg-[#6f1d1b] border border-[#99582a]/30 rounded-xl p-2 text-center shadow-inner">
-            <p className="text-[#bb9457] text-lg font-black">{skillsCount}</p>
-            <p className="text-[#99582a] text-[9px] font-bold uppercase tracking-wider mt-0.5">Skills</p>
+          <div className="text-center border-r border-[#E2E8F0] relative">
+            <span className="absolute -top-[21px] left-1/2 -translate-x-1/2 w-6 h-[2px] bg-[#0D9488]" />
+            <p className="text-xl font-medium text-[#0F172A]" style={serif}>{skillsCount !== null ? skillsCount : "—"}</p>
+            <p className="text-[#64748B] text-[9px] uppercase tracking-wide mt-0.5">Skills</p>
           </div>
-          <div className="bg-[#6f1d1b] border border-[#99582a]/30 rounded-xl p-2 text-center shadow-inner">
-            <p className="text-[#bb9457] text-lg font-black">{jobsCount}</p>
-            <p className="text-[#99582a] text-[9px] font-bold uppercase tracking-wider mt-0.5">Matches</p>
+          <div className="text-center relative">
+            <span className="absolute -top-[21px] left-1/2 -translate-x-1/2 w-6 h-[2px] bg-[#0F172A]" />
+            <p className="text-xl font-medium text-[#0F172A]" style={serif}>{jobsCount !== null ? jobsCount : "—"}</p>
+            <p className="text-[#64748B] text-[9px] uppercase tracking-wide mt-0.5">Matches</p>
           </div>
         </div>
       </aside>
 
-      {/* Right Panel - Fills remaining space, background #6f1d1b, padding 32px */}
-      <section className="flex-grow p-8 overflow-y-auto max-h-screen flex flex-col">
+      <section className="flex-grow px-8 py-10 md:px-14 md:py-12 overflow-y-auto max-h-screen flex flex-col">
         {!results ? (
-          // Center Empty State — includes a brief onboarding explainer so a
-          // cold-start user knows what they're about to get before uploading.
-          <div className="flex-grow flex flex-col items-center justify-center text-center p-8 animate-fadeIn">
-            <div className="w-16 h-16 rounded-2xl bg-[#432818] border border-[#99582a] flex items-center justify-center text-[#bb9457] mb-6 shadow-md">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
-                className="w-8 h-8"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9.813 15.904L9 21l8.904-4.43 3.002-12.01a1.875 1.875 0 10-3.536-1.258l-7.558 7.558z"
-                />
-              </svg>
-            </div>
-            <h4 className="text-xl font-bold text-[#ffe6a7] mb-2">Ready to analyze</h4>
-            <p className="text-[#99582a] text-sm max-w-xs leading-relaxed mb-6">
-              Upload your resume on the left to get started
-            </p>
+          <div className="flex-grow flex flex-col items-center justify-center text-center animate-fadeIn">
+            <h4 className="text-2xl font-medium text-[#0F172A] mb-2" style={serif}>Ready to analyze</h4>
+            <p className="text-[#64748B] text-sm max-w-xs leading-relaxed mb-10">Upload your resume on the left to get started</p>
 
-            <div className="max-w-md text-left bg-[#432818] border border-[#99582a] rounded-2xl p-5 space-y-3">
-              <h5 className="text-[#ffe6a7] font-bold text-sm">What you'll get</h5>
-              <ul className="space-y-2 text-[#bb9457] text-xs leading-relaxed">
-                <li className="flex gap-2">
-                  <span className="text-[#1a7a4a] flex-shrink-0">✓</span>
-                  <span>
-                    An <span className="text-[#ffe6a7] font-semibold">ATS score out of 100</span>, scored strictly
-                    against 11 explicit rules — not a black box. Every rule's reasoning is shown, and the score is
-                    intentionally hard to max out, similar to real recruiter screening.
-                  </span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-[#1a7a4a] flex-shrink-0">✓</span>
-                  <span>Skill gaps, job matches, an optimized rewrite, a cover letter, and interview prep — all tailored to a specific job description if you paste one.</span>
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-[#1a7a4a] flex-shrink-0">✓</span>
-                  <span>Your analysis is saved in this browser, so refreshing the page won't lose your results or roadmap progress.</span>
-                </li>
-              </ul>
+            <div className="max-w-md text-left space-y-3">
+              <h5 className="text-[#0F172A] font-semibold text-sm border-b border-[#E2E8F0] pb-2 mb-1">What you'll get</h5>
+              <div className="bg-[#2563EB]/[0.04] border-l-2 border-[#2563EB] pl-4 pr-4 py-3 flex gap-3">
+                <span className="text-[#2563EB] flex-shrink-0 font-semibold" style={mono}>01</span>
+                <span className="text-[#64748B] text-[13px] leading-relaxed">
+                  An <span className="text-[#0F172A] font-medium">ATS score out of 100</span>, scored strictly against 11 explicit rules — not a black box. Every rule's reasoning is shown, and the score is intentionally hard to max out, similar to real recruiter screening.
+                </span>
+              </div>
+              <div className="bg-[#0D9488]/[0.05] border-l-2 border-[#0D9488] pl-4 pr-4 py-3 flex gap-3">
+                <span className="text-[#0D9488] flex-shrink-0 font-semibold" style={mono}>02</span>
+                <span className="text-[#64748B] text-[13px] leading-relaxed">Skill gaps, job matches, an optimized rewrite, a cover letter, and interview prep — all tailored to a specific job description if you paste one.</span>
+              </div>
+              <div className="bg-[#0F172A]/[0.03] border-l-2 border-[#0F172A] pl-4 pr-4 py-3 flex gap-3">
+                <span className="text-[#0F172A] flex-shrink-0 font-semibold" style={mono}>03</span>
+                <span className="text-[#64748B] text-[13px] leading-relaxed">Your analysis is saved in this browser, so refreshing the page won't lose your results or roadmap progress.</span>
+              </div>
             </div>
           </div>
         ) : (
-          // Tabbed Content Dashboard View
-          <div className="space-y-6 flex flex-col flex-grow">
-
-
-            {/* Pill-Style Tabs Navigation Bar */}
-            <div className="flex items-center bg-[#432818] border border-[#99582a] p-1.5 rounded-[50px] self-start gap-2 shadow-md flex-wrap">
+          <div className="space-y-8 flex flex-col flex-grow">
+            <div className="flex items-center justify-between w-full gap-4 border-b border-[#E2E8F0] flex-wrap">
               {tabs.map((tab) => {
                 const isSelected = activeTab === tab.id;
                 return (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`px-5 py-2.5 rounded-[50px] text-xs sm:text-sm font-bold transition-all duration-300 ${
-                      isSelected
-                        ? "bg-[#bb9457] text-[#432818] shadow-sm"
-                        : "text-[#99582a] hover:text-[#bb9457] bg-transparent"
-                    }`}
+                    className={`pb-3 text-sm font-medium transition-colors border-b-2 -mb-px ${isSelected ? "text-[#0F172A] border-[#2563EB]" : "text-[#64748B] border-transparent hover:text-[#0F172A]"}`}
                   >
                     {tab.name}
                   </button>
@@ -333,16 +246,16 @@ export default function Dashboard({ onReset }) {
               })}
             </div>
 
-            {/* Active Panel Content */}
             <div key={activeTab} className="animate-fadeIn flex-grow">
               {renderActivePanel()}
             </div>
           </div>
         )}
       </section>
+
       {showToast && (
-        <div className="fixed bottom-6 right-6 bg-[#432818] text-[#bb9457] border border-[#bb9457] px-5 py-3 rounded-full shadow-2xl z-[1000] font-bold text-sm animate-fadeIn">
-          Re-analyzing your resume...
+        <div className="fixed bottom-6 right-6 bg-[#0F172A] text-white px-5 py-3 rounded-sm shadow-sm z-[1000] text-sm animate-fadeIn">
+          Re-analyzing your resume…
         </div>
       )}
     </div>

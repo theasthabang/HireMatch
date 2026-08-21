@@ -5,6 +5,7 @@ load_dotenv()
 import json
 import logging
 import asyncio
+import re
 from typing import Dict, Any, Optional, List
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
@@ -19,14 +20,51 @@ api_key = os.getenv('GROQ_API_KEY')
 if not api_key:
     logger.warning("GROQ_API_KEY environment variable is not set. API calls will fail unless configured via environment.")
 
+# Retry/backoff for individual chain calls, mirroring the pattern already
+# used for JSearch requests in main.py. Groq's rate limits are the single
+# most common cause of a chain silently returning None (see was_rate_limited
+# in run_all_chains) — a couple of short retries meaningfully cuts the
+# whole-chain failure rate without materially slowing down a normal request.
+#
+# NOTE ON ACCOUNT TIER: on the on-demand/free tier, a model like
+# openai/gpt-oss-120b can have a tokens-per-minute (TPM) cap as low as 8000.
+# Firing several large chain completions in the same instant (see the wave2
+# staggering in run_all_chains below) can burst past that in one shot even
+# though the account's *per-request* limits are fine. When that happens,
+# Groq's error message includes an exact "try again in Xs" wait time —
+# _parse_retry_after_seconds() below prefers that over a fixed exponential
+# guess, since a TPM-exhaustion wait can be 20-30s, far longer than a plain
+# request-rate 429 would need.
+CHAIN_MAX_RETRIES = 3          # per chain call, on rate-limit/5xx-shaped errors only
+CHAIN_RETRY_BASE_DELAY = 2.0   # seconds; used when no retry-after hint is parseable
+CHAIN_MAX_RETRY_DELAY = 30.0   # cap, so a parsed retry-after can't stall a request indefinitely
+
 LLM_AVAILABLE = True
 llm = None
 
 try:
     llm = ChatGroq(
-        model_name='llama-3.3-70b-versatile',
+        # llama-3.3-70b-versatile was retired by Groq on 2026-08-16 (see
+        # https://console.groq.com/docs/deprecations). openai/gpt-oss-120b is
+        # Groq's recommended direct replacement for general-purpose/reasoning
+        # workloads. If Groq deprecates this one too in the future, check that
+        # page again before swapping the string — a 404 model_not_found error
+        # from every chain simultaneously is the signature of this exact issue.
+        model_name='openai/gpt-oss-120b',
         groq_api_key=api_key,
-        temperature=0.2
+        temperature=0.2,
+        # Previously unset, meaning a single verbose completion had no ceiling
+        # and could eat an unpredictable, large share of the account's 8000
+        # tokens-per-minute budget on its own — a real contributor to wave 2's
+        # chains (rewrite/interview/roadmap/cover_letter) randomly losing the
+        # TPM race against each other. 3000 was chosen by estimating each
+        # chain's actual worst-case JSON shape (the interview chain's 10
+        # questions x ~150 tokens each is the largest single consumer, with
+        # a bullet-heavy rewrite chain a close second) plus headroom — tight
+        # enough to make token cost predictable, not so tight that a normal
+        # response gets cut mid-JSON and fails to parse, which would trade
+        # one failure mode for a worse one.
+        max_tokens=3000,
     )
 except Exception as e:
     logger.critical(f"Failed to instantiate ChatGroq client: {e}", exc_info=True)
@@ -293,20 +331,49 @@ job_match_chain = build_job_match_chain()
 followup_chain = build_followup_chain()
 
 async def _invoke_chain_safe(chain, inputs: Dict[str, Any], name: str) -> Optional[str]:
-    """Helper function to invoke a single chain asynchronously with full exception safety."""
+    """Helper function to invoke a single chain asynchronously with full exception safety.
+
+    Retries on rate-limit-shaped errors (see _is_rate_limit_error) with
+    exponential backoff, the same way _jsearch_request_with_retry does for
+    JSearch in main.py — a transient 429 from Groq shouldn't permanently
+    fail a whole chain for the request when a short wait would have worked.
+    Non-rate-limit errors (bad prompt, auth failure, etc.) are not retried,
+    since those won't resolve themselves on a second attempt.
+
+    When Groq's error message includes an exact wait time (TPM-exhaustion
+    errors do — see _parse_retry_after_seconds), that's used directly instead
+    of the exponential guess, since it can legitimately be much longer than
+    a plain request-rate 429 would need.
+    """
     if not chain:
         logger.warning(f"Chain {name} is not initialized/available.")
         return None
-    try:
-        logger.info(f"Triggering {name} chain ainvoke...")
-        response = await chain.ainvoke(inputs)
-        logger.info(f"Received response from {name} chain.")
-        return response
-    except Exception as e:
-        logger.error(f"Unhandled error in {name} chain invocation: {e}", exc_info=True)
-        return None
 
-import re
+    last_exc = None
+    for attempt in range(CHAIN_MAX_RETRIES + 1):
+        try:
+            logger.info(f"Triggering {name} chain ainvoke (attempt {attempt + 1}/{CHAIN_MAX_RETRIES + 1})...")
+            response = await chain.ainvoke(inputs)
+            logger.info(f"Received response from {name} chain.")
+            return response
+        except Exception as e:
+            last_exc = e
+            if _is_rate_limit_error(e) and attempt < CHAIN_MAX_RETRIES:
+                retry_after = _parse_retry_after_seconds(e)
+                delay = retry_after if retry_after is not None else CHAIN_RETRY_BASE_DELAY * (2 ** attempt)
+                source = "provider-specified" if retry_after is not None else "exponential-backoff"
+                logger.warning(
+                    f"{name} chain hit a rate-limit-shaped error. Retrying in {delay:.1f}s ({source}) "
+                    f"(attempt {attempt + 1}/{CHAIN_MAX_RETRIES})..."
+                )
+                await asyncio.sleep(delay)
+                continue
+            # Non-retryable error, or retries exhausted — give up on this chain.
+            break
+
+    logger.error(f"Unhandled error in {name} chain invocation: {last_exc}", exc_info=True)
+    return None
+
 
 def _escape_control_chars_in_strings(s: str) -> str:
     """
@@ -472,49 +539,117 @@ async def score_job_matches(resume_text: str, jobs: List[Dict[str, Any]]) -> Opt
     return parsed["matches"]
 
 
-async def run_all_chains(resume_text: str, job_description: str = "") -> Dict[str, Optional[Dict[str, Any]]]:
-    """Runs all analysis chains in parallel and parses the JSON responses safely.
+def _is_rate_limit_error(exc) -> bool:
+    """Detects whether an exception is a provider rate-limit response, so the
+    final error message can say what actually happened instead of the
+    generic (and misleading) 'check your configuration'."""
+    text = str(exc).lower()
+    return "rate_limit" in text or "429" in text or "rate limit" in text
+
+
+def _parse_retry_after_seconds(exc) -> Optional[float]:
+    """
+    Groq's TPM (tokens-per-minute) rate-limit errors include an exact wait
+    time, e.g. "Please try again in 28.41s". That's far more reliable than a
+    fixed exponential backoff guess — a TPM-exhaustion wait can legitimately
+    be 20-30s (see the CHAIN_MAX_RETRIES comment above), which a 1.5s/3s
+    backoff has no chance of clearing. Falls back to None (caller uses
+    exponential backoff instead) if no such hint is present in the message,
+    e.g. for a plain request-rate 429 with no token-budget detail.
+    """
+    match = re.search(r"try again in ([\d.]+)s", str(exc))
+    if not match:
+        return None
+    try:
+        return min(float(match.group(1)), CHAIN_MAX_RETRY_DELAY)
+    except ValueError:
+        return None
+
+
+async def run_all_chains(resume_text: str, job_description: str = "") -> tuple:
+    """Runs all analysis chains and parses the JSON responses safely.
+
+    Chains are staggered into two waves rather than all 7 fired at once —
+    with 8 total LLM calls per analysis (7 chains + the job-match scoring
+    call that follows), firing everything simultaneously can burst past the
+    provider's tokens-per-minute limit even when each individual call would
+    fit comfortably alone. Wave 1 (ats/skills/jobs — shorter completions)
+    still fires concurrently since that hasn't been observed to trip the
+    limit; wave 2 (rewrite/interview/roadmap/cover_letter — longer, pricier
+    completions) now runs fully sequentially — one chain's request completes
+    before the next one starts — rather than concurrently. Staggering just
+    the *launch* time (a prior version of this function) wasn't enough: with
+    a genuinely tight per-account TPM budget, two calls launched 2s apart
+    can still have their completions overlap in the same rolling window,
+    which is exactly what was still causing an occasional wave-2 chain (seen
+    on both 'cover_letter' and 'rewrite' in practice) to lose the token race
+    and exhaust its retries. True sequential execution trades wall-clock
+    time (wave 2 now takes roughly as long as its 4 calls summed, rather
+    than the fastest of the 4) for actual reliability — the honest tradeoff
+    given the account's rate limit, not a cosmetic mitigation.
 
     :param resume_text: Extracted text from the candidate's resume.
     :param job_description: Optional pasted job description. When non-empty, the ATS,
         Skills, Rewrite, and Cover Letter chains tailor their analysis to this specific
         posting instead of a generically inferred role (see JD_TAILORING_INSTRUCTION).
         Jobs/Interview/Roadmap chains ignore it — their prompts don't reference it.
-    :return: A dictionary containing the parsed outputs for: 'ats', 'skills', 'jobs',
-        'rewrite', 'interview', 'roadmap', and 'cover_letter'.
+    :return: (results_dict, was_rate_limited) — results_dict contains parsed outputs for
+        'ats', 'skills', 'jobs', 'rewrite', 'interview', 'roadmap', 'cover_letter'.
+        was_rate_limited is True if any chain failure looked like a provider rate limit,
+        so callers can surface an accurate error message instead of a generic one.
     """
-    keys = ["ats", "skills", "jobs", "rewrite", "interview", "roadmap", "cover_letter"]
+    wave1_keys = ["ats", "skills", "jobs"]
+    wave2_keys = ["rewrite", "interview", "roadmap", "cover_letter"]
+    all_keys = wave1_keys + wave2_keys
 
     if not LLM_AVAILABLE:
         logger.warning("LLM client is not available. Skipping all chain invocations.")
-        return {key: None for key in keys}
+        return {key: None for key in all_keys}, False
 
-    logger.info("Starting execution of all analysis chains in parallel.")
+    logger.info("Starting execution of analysis chains (wave 1 concurrent, wave 2 sequential)...")
     inputs = {"resume_text": resume_text, "job_description": job_description or ""}
 
-    # Execute all 7 chains concurrently
-    raw_results = await asyncio.gather(
+    wave1_results = await asyncio.gather(
         _invoke_chain_safe(ats_chain, inputs, "ats"),
         _invoke_chain_safe(skills_chain, inputs, "skills"),
         _invoke_chain_safe(jobs_chain, inputs, "jobs"),
-        _invoke_chain_safe(rewrite_chain, inputs, "rewrite"),
-        _invoke_chain_safe(interview_chain, inputs, "interview"),
-        _invoke_chain_safe(roadmap_chain, inputs, "roadmap"),
-        _invoke_chain_safe(cover_letter_chain, inputs, "cover_letter"),
         return_exceptions=True
     )
 
-    final_dict = {}
+    # Brief pause before wave 2 to let wave 1's token usage clear the rolling
+    # TPM window a bit before the next (larger) set of calls begins.
+    await asyncio.sleep(1.5)
 
-    for key, res in zip(keys, raw_results):
+    # Wave 2 is now fully sequential — see the reasoning in this function's
+    # docstring above. Each _invoke_chain_safe call still has its own
+    # retry-with-backoff for any 429 that occurs anyway (a tight account
+    # budget plus other concurrent traffic on the same key can still produce
+    # one), but sequential execution means that's now the exception path
+    # rather than the routine one.
+    wave2_results = []
+    for chain, key in zip(
+        [rewrite_chain, interview_chain, roadmap_chain, cover_letter_chain],
+        wave2_keys,
+    ):
+        result = await _invoke_chain_safe(chain, inputs, key)
+        wave2_results.append(result)
+
+    all_results = list(wave1_results) + list(wave2_results)
+
+    final_dict = {}
+    was_rate_limited = False
+
+    for key, res in zip(all_keys, all_results):
         if isinstance(res, Exception):
+            if _is_rate_limit_error(res):
+                was_rate_limited = True
             logger.error(f"Gathered exception for {key} chain: {res}", exc_info=True)
             final_dict[key] = None
         else:
             final_dict[key] = _parse_json_safe(res, key)
-            
-    logger.info("Finished gathering and parsing all analysis chains.")
-    return final_dict
+
+    logger.info(f"Finished gathering and parsing all analysis chains. Rate limited: {was_rate_limited}")
+    return final_dict, was_rate_limited
 
 
 async def answer_ats_followup(

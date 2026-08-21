@@ -9,3 +9,4 @@ python-multipart
 python-docx
 python-dotenv
 httpx
+slowapi

@@ -127,8 +127,61 @@ export async function askAboutScore(atsSummary, question, resumeText, history) {
 }
 
 /**
- * Records a thumbs up/down on a specific AI-generated suggestion.
- * Fire-and-forget from the UI's perspective — callers should not block on
+ * Requests a downloadable .docx built from the summary/bullets the user has
+ * already accepted in the Rewrite panel, and triggers a browser download.
+ *
+ * No AI generation happens here — this renders exactly the content already
+ * reviewed on screen (see resume_export.py's docstring on the backend) —
+ * so unlike the other client.js functions there's no new AI-content risk
+ * to surface as an error state beyond a plain network/render failure.
+ *
+ * @param {Object} params
+ * @param {string} [params.fullName] - Candidate's name for the doc header, if known.
+ * @param {string} [params.contactLine] - Optional single line of contact info.
+ * @param {string} params.summary - The optimized summary text.
+ * @param {string[]} params.bullets - Accepted bullet text, in order.
+ */
+export async function exportResumeDocx({ fullName, contactLine, summary, bullets }) {
+  if (!summary && (!bullets || bullets.length === 0)) {
+    throw new Error("Nothing to export yet — accept a summary or at least one bullet first.");
+  }
+
+  const response = await fetch(`${BACKEND_URL}/export/resume`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      full_name: fullName || null,
+      contact_line: contactLine || null,
+      summary: summary || null,
+      bullets: bullets || [],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response, "Resume export"));
+  }
+
+  // Extract the server-suggested filename from Content-Disposition rather
+  // than hardcoding "resume.docx" — main.py names it after the candidate
+  // when a name was provided.
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match ? match[1] : "resume.docx";
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+ /**
+* Fire-and-forget from the UI's perspective — callers should not block on
  * this or treat a failure as fatal to the surrounding feature.
  *
  * @param {string} feature - Which feature this is about, e.g. 'ats_tip', 'ats_overall', 'interview_question'.

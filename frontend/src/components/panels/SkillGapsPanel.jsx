@@ -1,301 +1,196 @@
 import React, { useState } from "react";
 
 /**
- * SkillGapsPanel redesigned for the split-screen dashboard view.
- * Utilizes #432818 bg card containers, #99582a borders, 16px border-radius, and 24px padding.
+ * SkillGapsPanel — ledger architecture, not reskinned cards.
+ *
+ * Two structural departures from the old tab-based panel:
+ * 1. Strengths vs Gaps render as a balance-sheet ledger (center divider
+ *    rule, opposing columns) instead of two side-by-side pill-tag boxes.
+ * 2. The roadmap shows all 12 weeks at once, grouped under phase headers,
+ *    instead of hiding 2/3 of the plan behind clickable phase tabs — you
+ *    can see and scan the whole journey, not just the phase you clicked.
+ *
+ * Color: Primary Blue (#2563EB) stays reserved for gaps/critical. Teal
+ * (#0D9488) marks positive/complete states — strengths, matched items,
+ * finished roadmap weeks — the "highlighter" to blue's "pen," both grounded
+ * in the same graded-document metaphor as the rest of the app.
  */
 export default function SkillGapsPanel({ data, roadmap, completedWeeks: completedWeeksProp, onCompletedWeeksChange }) {
-  const [activePhaseIdx, setActivePhaseIdx] = useState(0);
-  // Falls back to local state only if no persisted-state props are passed
-  // (keeps this component usable standalone), but Dashboard always supplies
-  // completedWeeksProp/onCompletedWeeksChange so progress is lifted and persisted.
   const [localCompletedWeeks, setLocalCompletedWeeks] = useState([]);
   const completedWeeks = completedWeeksProp !== undefined ? completedWeeksProp : localCompletedWeeks;
   const setCompletedWeeks = onCompletedWeeksChange || setLocalCompletedWeeks;
+
+  const serif = { fontFamily: "'Fraunces', serif" };
+  const mono = { fontFamily: "'IBM Plex Mono', monospace" };
+
   if (!data) {
     return (
-      <div className="bg-[#432818] border border-[#99582a] rounded-2xl p-6 text-[#ffe6a7] text-sm animate-fadeIn">
+      <div className="bg-white border border-[#E2E8F0] rounded-sm p-8 text-[#0F172A] text-sm animate-fadeIn">
         <div className="flex items-center space-x-3">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="w-6 h-6 text-[#bb9457] flex-shrink-0"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
-            />
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-[#64748B] flex-shrink-0">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
           </svg>
-          <span className="font-bold text-base text-[#ffe6a7]">Skills Analysis Unavailable</span>
+          <span className="font-semibold text-base text-[#0F172A]" style={serif}>Skills Analysis Unavailable</span>
         </div>
-        <p className="mt-2 text-[#bb9457]">
-          The skills analysis is currently unavailable.
-        </p>
+        <p className="mt-2 text-[#64748B]">The skills analysis is currently unavailable.</p>
       </div>
     );
   }
 
   const { strong_skills = [], weak_areas = [], recommended_courses = [] } = data;
+  const maxRows = Math.max(strong_skills.length, weak_areas.length, 1);
+
+  const totalWeeks = roadmap?.phases?.reduce((sum, p) => sum + (p.weeks?.length || 0), 0) || 12;
+
+  const toggleWeek = (weekNumber) => {
+    if (completedWeeks.includes(weekNumber)) {
+      setCompletedWeeks(completedWeeks.filter((w) => w !== weekNumber));
+    } else {
+      setCompletedWeeks([...completedWeeks, weekNumber]);
+    }
+  };
 
   return (
-    <div className="bg-[#432818] border border-[#99582a] rounded-[16px] p-6 shadow-2xl space-y-8 animate-fadeIn text-[#ffe6a7]">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        
-        {/* Strong Skills (Gold BG, Dark Brown Text) */}
-        <div className="space-y-4">
-          <div className="flex items-center space-x-2 text-[#bb9457]">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-5 h-5"
-            >
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <h3 className="font-bold text-[#ffe6a7] text-base uppercase tracking-wider">Strong Skills</h3>
-          </div>
-          <div className="bg-[#6f1d1b]/30 border border-[#99582a] rounded-xl p-5 min-h-[140px]">
-            {strong_skills.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {strong_skills.map((skill, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-bold bg-[#bb9457] text-[#432818] border border-[#ffe6a7]/20 shadow-sm"
-                  >
-                    {skill}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[#99582a] text-sm italic">No strong skills identified.</p>
-            )}
-          </div>
+    <div className="bg-white border border-[#E2E8F0] rounded-sm p-8 md:p-12 space-y-14 animate-fadeIn text-[#0F172A]">
+
+      {/* ============ Ledger: Strengths vs Gaps ============ */}
+      <div>
+        <div className="flex items-baseline justify-between border-b border-[#0F172A] pb-2 mb-1">
+          <h3 className="text-lg font-medium" style={serif}>Skills ledger</h3>
+          <span className="text-[11px] text-[#64748B]" style={mono}>
+            {strong_skills.length} strengths · {weak_areas.length} gaps
+          </span>
         </div>
 
-        {/* Weak Areas (Deep Red BG, Cream Text, Muted Border) */}
-        <div className="space-y-4">
-          <div className="flex items-center space-x-2 text-[#bb9457]">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-5 h-5"
-            >
-              <path
-                fillRule="evenodd"
-                d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <h3 className="font-bold text-[#ffe6a7] text-base uppercase tracking-wider">Skill Gaps</h3>
-          </div>
-          <div className="bg-[#6f1d1b]/30 border border-[#99582a] rounded-xl p-5 min-h-[140px]">
-            {weak_areas.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {weak_areas.map((skill, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-semibold bg-[#6f1d1b] text-[#ffe6a7] border border-[#99582a] shadow-sm"
-                  >
-                    {skill}
+        <div className="grid grid-cols-2">
+          <div className="pr-6 border-r border-[#E2E8F0] bg-[#0D9488]/[0.03] pl-4 -ml-4">
+            <div className="text-[11px] font-semibold text-[#0D9488] uppercase tracking-wide py-3">Strengths</div>
+            {Array.from({ length: maxRows }).map((_, i) => (
+              <div key={i} className="py-2 border-t border-[#F1F5F9] min-h-[36px] flex items-center">
+                {strong_skills[i] ? (
+                  <span className="text-sm text-[#0F172A]">
+                    <span className="text-[#0D9488] mr-2">+</span>{strong_skills[i]}
                   </span>
-                ))}
+                ) : (
+                  <span className="text-transparent select-none">—</span>
+                )}
               </div>
-            ) : (
-              <p className="text-[#99582a] text-sm italic">No significant skill gaps found.</p>
-            )}
+            ))}
+          </div>
+          <div className="pl-6 bg-[#2563EB]/[0.025] pr-4 -mr-4">
+            <div className="text-[11px] font-semibold text-[#2563EB] uppercase tracking-wide py-3">Gaps</div>
+            {Array.from({ length: maxRows }).map((_, i) => (
+              <div key={i} className="py-2 border-t border-[#F1F5F9] min-h-[36px] flex items-center">
+                {weak_areas[i] ? (
+                  <span className="text-sm text-[#64748B]">
+                    <span className="text-[#2563EB] mr-2">−</span>{weak_areas[i]}
+                  </span>
+                ) : (
+                  <span className="text-transparent select-none">—</span>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      <hr className="border-[#99582a]" />
-
-      {/* Recommended Courses List with Course Cards (#432818 bg, resource link #bb9457) */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-[#bb9457]">Recommended Courses</h3>
+      {/* ============ Recommended courses ============ */}
+      <div className="space-y-5">
+        <h3 className="text-lg font-medium text-[#0F172A] border-b border-[#E2E8F0] pb-3" style={serif}>Recommended courses</h3>
         {recommended_courses.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="divide-y divide-[#E2E8F0]">
             {recommended_courses.map((course, i) => (
-              <div
-                key={i}
-                className="bg-[#432818] border border-[#99582a] rounded-xl p-5 hover:bg-[#6f1d1b]/20 transition flex flex-col justify-between"
-              >
-                <div className="space-y-1 mb-4">
-                  <h4 className="font-extrabold text-[#ffe6a7] text-sm leading-tight">
-                    {course.skill}
-                  </h4>
-                  <p className="text-[#99582a] text-[10px] font-bold uppercase tracking-wider">
-                    Targeted learning resource
-                  </p>
+              <div key={i} className="py-4 flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="font-medium text-[#0F172A] text-sm">{course.skill}</h4>
+                  <p className="text-[#64748B] text-[11px] mt-0.5">Targeted learning resource</p>
                 </div>
                 <a
-                  href={`https://www.google.com/search?q=${encodeURIComponent(
-                    course.resource || course.skill
-                  )}`}
+                  href={`https://www.google.com/search?q=${encodeURIComponent(course.resource || course.skill)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center space-x-1.5 text-xs font-bold text-[#bb9457] hover:text-[#ffe6a7] transition self-start"
+                  className="text-xs font-medium text-[#0D9488] hover:text-[#2563EB] transition flex-shrink-0 whitespace-nowrap"
                 >
-                  <span>{course.resource || "Search course"}</span>
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={2.5}
-                    stroke="currentColor"
-                    className="w-3.5 h-3.5"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
-                    />
-                  </svg>
+                  {course.resource || "Search course"} →
                 </a>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-[#99582a] text-sm italic text-center py-4 bg-[#6f1d1b]/20 rounded-xl border border-[#99582a]">
-            No course recommendations available.
-          </p>
+          <p className="text-[#64748B] text-sm italic text-center py-4">No course recommendations available.</p>
         )}
       </div>
 
-      <hr className="border-[#99582a]" />
+      {/* ============ Roadmap: all weeks visible, no tab-hiding ============ */}
+      <div className="space-y-6">
+        <div className="flex items-baseline justify-between border-b border-[#E2E8F0] pb-3">
+          <h3 className="text-lg font-medium text-[#0F172A]" style={serif}>Your 90-day roadmap</h3>
+          <span className="text-[11px] text-[#64748B]" style={mono}>{completedWeeks.length} / {totalWeeks} weeks done</span>
+        </div>
 
-      {/* Your 90-Day Roadmap */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-[#bb9457]">Your 90-Day Roadmap</h3>
         {!roadmap || !roadmap.phases || roadmap.phases.length === 0 ? (
-          <p className="text-[#99582a] text-sm italic text-center py-4 bg-[#6f1d1b]/20 rounded-xl border border-[#99582a]">
+          <p className="text-[#64748B] text-sm italic text-center py-4">
             Your personalized roadmap could not be generated — try re-analyzing your resume.
           </p>
         ) : (
-          <div className="space-y-6">
-            <p className="text-[#bb9457] text-[13px] font-semibold mb-4">
-              A personalized plan to close your gaps in: {roadmap.target_skills ? roadmap.target_skills.join(", ") : ""}
+          <>
+            <p className="text-[#64748B] text-[13px] -mt-2">
+              Closing gaps in: {roadmap.target_skills ? roadmap.target_skills.join(", ") : ""}
             </p>
 
-            {/* Overall Progress Bar */}
-            <div className="space-y-2">
-              <div className="flex justify-between items-center text-xs font-semibold text-[#ffe6a7]">
-                <span>Overall Progress</span>
-                <span>{completedWeeks.length} of 12 weeks completed</span>
-              </div>
-              <div className="w-full bg-[#432818] rounded-full h-2.5 overflow-hidden">
-                <div
-                  className="bg-[#1a7a4a] h-full transition-all duration-300 rounded-full"
-                  style={{ width: `${(completedWeeks.length / 12) * 100}%` }}
-                />
-              </div>
+            <div className="w-full bg-[#F1F5F9] h-[3px] overflow-hidden">
+              <div className="bg-[#0D9488] h-full transition-all duration-300" style={{ width: `${(completedWeeks.length / totalWeeks) * 100}%` }} />
             </div>
 
-            {/* Phase Tabs */}
-            <div className="flex flex-wrap gap-2">
-              {roadmap.phases.map((phase, idx) => {
-                const isActive = activePhaseIdx === idx;
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => setActivePhaseIdx(idx)}
-                    className={`px-4 py-2 rounded-full text-xs font-bold transition-all duration-200 ${
-                      isActive
-                        ? "bg-[#bb9457] text-[#432818]"
-                        : "bg-[#6f1d1b] text-[#99582a] border border-[#99582a]/30 hover:border-[#bb9457]/50"
-                    }`}
-                  >
-                    {phase.phase_name} ({phase.days_range})
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Vertical Timeline */}
-            <div className="relative pl-1 mt-4 space-y-8">
-              {roadmap.phases[activePhaseIdx]?.weeks?.map((week, idx, arr) => {
-                const isCompleted = completedWeeks.includes(week.week_number);
-                return (
-                  <div key={week.week_number} className="flex gap-4 items-stretch relative">
-                    {/* Badge and Connecting Line */}
-                    <div className="flex flex-col items-center flex-shrink-0 relative">
-                      <div className="w-8 h-8 rounded-full bg-[#bb9457] text-[#432818] font-bold flex items-center justify-center text-sm z-10">
-                        {week.week_number}
-                      </div>
-                      {idx < arr.length - 1 && (
-                        <div className="w-[2px] bg-[#99582a] absolute top-8 bottom-[-32px] z-0" />
-                      )}
-                    </div>
-
-                    {/* Card */}
-                    <div
-                      className={`flex-grow bg-[#6f1d1b] border border-[#99582a] rounded-[10px] p-[14px_18px] transition-all duration-200 relative ${
-                        isCompleted
-                          ? "border-l-[3px] border-l-[#1a7a4a] opacity-70"
-                          : ""
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        {/* Checkbox */}
-                        <label className="cursor-pointer select-none group flex-shrink-0 mt-0.5">
-                          <input
-                            type="checkbox"
-                            checked={isCompleted}
-                            onChange={() => {
-                              if (isCompleted) {
-                                setCompletedWeeks(completedWeeks.filter((w) => w !== week.week_number));
-                              } else {
-                                setCompletedWeeks([...completedWeeks, week.week_number]);
-                              }
-                            }}
-                            className="sr-only"
-                          />
-                          <div
-                            className={`w-[18px] h-[18px] flex-shrink-0 rounded border-2 flex items-center justify-center transition-all duration-150 ${
-                              isCompleted
-                                ? "bg-[#bb9457] border-[#bb9457]"
-                                : "border-[#99582a] bg-[#6f1d1b] group-hover:border-[#bb9457]"
-                            }`}
-                          >
-                            {isCompleted && (
-                              <span className="text-[#432818] text-xs font-black select-none">✓</span>
-                            )}
-                          </div>
-                        </label>
-
-                        {/* Text Content */}
-                        <div className="flex-grow space-y-1 pb-4">
-                          <h4
-                            className={`text-[#ffe6a7] font-bold text-sm leading-tight transition-all duration-150 ${
-                              isCompleted ? "line-through" : ""
-                            }`}
-                          >
-                            {week.title}
-                          </h4>
-                          <p className="text-[#99582a] text-[13px] leading-relaxed">
-                            {week.description}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Estimated Hours Pill bottom-right */}
-                      <span className="absolute bottom-3 right-4 bg-[#432818] text-[#bb9457] text-[11px] px-2.5 py-0.5 rounded-full font-semibold">
-                        {week.estimated_hours} hrs/week
-                      </span>
-                    </div>
+            {/* All phases stacked and always visible — nothing hidden behind a click */}
+            <div className="space-y-8 pt-2">
+              {roadmap.phases.map((phase, phaseIdx) => (
+                <div key={phaseIdx}>
+                  <div className="flex items-baseline gap-3 mb-3">
+                    <h4 className="text-sm font-semibold text-[#0F172A]">{phase.phase_name}</h4>
+                    <span className="text-[10px] text-[#64748B]" style={mono}>{phase.days_range}</span>
                   </div>
-                );
-              })}
+
+                  <div className="divide-y divide-[#F1F5F9]">
+                    {phase.weeks?.map((week) => {
+                      const isCompleted = completedWeeks.includes(week.week_number);
+                      return (
+                        <div key={week.week_number} className="py-3.5 flex items-start gap-4">
+                          <span className="text-[11px] font-semibold text-[#64748B] flex-shrink-0 pt-0.5 w-8" style={mono}>
+                            W{String(week.week_number).padStart(2, "0")}
+                          </span>
+
+                          <label className="cursor-pointer select-none group flex-shrink-0 mt-0.5">
+                            <input
+                              type="checkbox"
+                              checked={isCompleted}
+                              onChange={() => toggleWeek(week.week_number)}
+                              className="sr-only"
+                            />
+                            <div className={`w-3.5 h-3.5 flex-shrink-0 border flex items-center justify-center transition-all duration-150 ${
+                              isCompleted ? "bg-[#0D9488] border-[#0D9488]" : "border-[#64748B] group-hover:border-[#0F172A]"
+                            }`}>
+                              {isCompleted && <span className="text-white text-[9px] font-bold select-none">✓</span>}
+                            </div>
+                          </label>
+
+                          <div className="flex-grow space-y-0.5 min-w-0">
+                            <div className="flex items-start justify-between gap-3">
+                              <h5 className={`text-[#0F172A] font-medium text-[13px] leading-tight ${isCompleted ? "line-through text-[#64748B]" : ""}`}>
+                                {week.title}
+                              </h5>
+                              <span className="text-[10px] text-[#64748B] flex-shrink-0" style={mono}>{week.estimated_hours}h</span>
+                            </div>
+                            <p className="text-[#64748B] text-xs leading-relaxed">{week.description}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          </>
         )}
       </div>
     </div>
