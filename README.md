@@ -2,8 +2,8 @@
 
 An AI-powered resume analyzer I built to actually understand how ATS scoring works and to help freshers like me figure out why their resume isn't getting shortlisted. Instead of just giving a random score out of 100 like most tools online, this one shows you exactly why you got that score, rule by rule.
 
-Live demo: *(add your deployed link here once it's up)*
-Video walkthrough: *(optional, add if you record one)*
+Live demo: https://hire-match-bay.vercel.app/
+
 
 ---
 
