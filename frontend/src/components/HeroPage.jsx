@@ -1,5 +1,5 @@
 import React from "react";
-import { SignedIn, SignedOut, SignIn, UserButton } from "@clerk/clerk-react";
+import { SignedIn, SignedOut, UserButton, useClerk } from "@clerk/clerk-react";
 
 /**
  * HeroPage — graded-paper system. Includes a small preview of the
@@ -8,18 +8,17 @@ import { SignedIn, SignedOut, SignIn, UserButton } from "@clerk/clerk-react";
  * hero. Feature list uses the same mono-numeral pattern (01, 02...) used
  * across the app for visual continuity into the dashboard.
  *
- * AUTH: the Clerk sign-in box is embedded directly in the hero content
- * (SignedOut block below) rather than behind a button/modal or a separate
- * /sign-in page — visible immediately, no click needed. routing="virtual"
- * is required for this: it tells Clerk to manage its own internal steps
- * (password entry, email verification code, "forgot password", etc.) in
- * place, in memory, without needing a matching URL route the way the
- * standalone /sign-in/* route in App.jsx does. The `appearance` prop
- * below reskins Clerk's default black-and-white look to match this site's
- * own Paper (#F8FAFC) / Ink (#0F172A) / Blue (#2563EB) palette and
- * Fraunces/Inter fonts instead of looking like an unrelated embedded widget.
+ * AUTH: sign-in is a POPUP — clicking the button below calls
+ * useClerk().openSignIn(), which opens Clerk's sign-in box as an overlay
+ * on top of this page (not inserted into the page's own layout/flow the
+ * way an embedded <SignIn/> component would be). openSignIn() accepts the
+ * same `appearance` config an embedded component would, so the popup is
+ * still restyled to match this site's Paper (#F8FAFC) / Ink (#0F172A) /
+ * Blue (#2563EB) palette and Fraunces/Inter fonts instead of Clerk's
+ * default black-and-white look.
  */
 export default function HeroPage({ onStart }) {
+  const { openSignIn, openSignUp } = useClerk();
   const serif = { fontFamily: "'Fraunces', serif" };
   const mono = { fontFamily: "'IBM Plex Mono', monospace" };
 
@@ -31,17 +30,10 @@ export default function HeroPage({ onStart }) {
       colorBackground: "#FFFFFF",
       colorInputBackground: "#F8FAFC",
       colorInputText: "#0F172A",
-      borderRadius: "0.125rem", // matches the app's rounded-sm everywhere else
+      borderRadius: "0.125rem",
       fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     },
     elements: {
-      // Our own heading (below) replaces Clerk's default "Sign in to
-      // [App Name]" title/subtitle, so the embedded box reads as part of
-      // this page rather than a separate branded widget.
-      headerTitle: "hidden",
-      headerSubtitle: "hidden",
-      card: "shadow-none border border-[#E2E8F0] rounded-sm p-0 w-full",
-      cardBox: "w-full shadow-none",
       formButtonPrimary: "bg-[#0F172A] hover:bg-[#2563EB] text-sm normal-case transition-colors duration-200",
       footerActionLink: "text-[#2563EB] hover:text-[#0F172A]",
       socialButtonsBlockButton: "border-[#E2E8F0] text-[#0F172A] hover:bg-[#F1F5F9]",
@@ -50,7 +42,16 @@ export default function HeroPage({ onStart }) {
       formFieldInput: "border-[#E2E8F0] focus:border-[#0F172A] rounded-sm",
       formFieldLabel: "text-[#0F172A]",
       identityPreviewEditButton: "text-[#2563EB]",
+      card: "rounded-sm",
     },
+  };
+
+  const handleOpenSignIn = () => {
+    openSignIn({ appearance: clerkAppearance, forceRedirectUrl: "/dashboard" });
+  };
+
+  const handleOpenSignUp = () => {
+    openSignUp({ appearance: clerkAppearance, forceRedirectUrl: "/dashboard" });
   };
 
   return (
@@ -62,11 +63,25 @@ export default function HeroPage({ onStart }) {
           <span className="text-lg font-medium" style={serif}>HireMatch</span>
         </div>
 
-        {/* Signed-in visitors just get their avatar/menu up here — the
-            sign-in box below is only relevant while signed out. */}
-        <SignedIn>
-          <UserButton afterSignOutUrl="/" />
-        </SignedIn>
+        <div className="flex items-center gap-3">
+          <SignedOut>
+            <button
+              onClick={handleOpenSignIn}
+              className="text-sm font-medium text-[#64748B] hover:text-[#0F172A] transition-colors duration-200"
+            >
+              Sign in
+            </button>
+            <button
+              onClick={handleOpenSignUp}
+              className="bg-[#0F172A] hover:bg-[#2563EB] text-white text-sm font-medium py-2 px-4 rounded-sm transition-colors duration-200"
+            >
+              Sign up
+            </button>
+          </SignedOut>
+          <SignedIn>
+            <UserButton afterSignOutUrl="/" />
+          </SignedIn>
+        </div>
       </header>
 
       <main className="flex-grow flex flex-col items-center justify-center text-center px-6 py-16 max-w-[900px] mx-auto w-full">
@@ -78,22 +93,19 @@ export default function HeroPage({ onStart }) {
           Your resume, <span className="text-[#2563EB]">graded honestly.</span>
         </h2>
 
-        <p className="text-[#64748B] text-base sm:text-lg max-w-[560px] leading-relaxed mb-10">
+        <p className="text-[#64748B] text-base sm:text-lg max-w-[560px] leading-relaxed mb-12">
           Not a black-box score. Upload your resume and see exactly why you scored what you did, rule by rule —
           plus skill gaps, live job matches, and an AI-optimized rewrite.
         </p>
 
-        {/* ============ Signed out: the sign-in box itself, right here ============ */}
         <SignedOut>
-          <div className="w-full max-w-sm text-left space-y-3 animate-fadeIn">
-            <h3 className="text-lg font-medium text-[#0F172A] text-center" style={serif}>
-              Sign in to analyze your resume
-            </h3>
-            <SignIn routing="virtual" appearance={clerkAppearance} forceRedirectUrl="/dashboard" />
-          </div>
+          <button
+            onClick={handleOpenSignIn}
+            className="bg-[#0F172A] hover:bg-[#2563EB] text-white font-medium text-sm py-3.5 px-10 rounded-sm transition-colors duration-200"
+          >
+            Sign in to analyze your resume →
+          </button>
         </SignedOut>
-
-        {/* ============ Signed in: the usual CTA straight into the app ============ */}
         <SignedIn>
           <button
             onClick={onStart}
@@ -103,7 +115,7 @@ export default function HeroPage({ onStart }) {
           </button>
         </SignedIn>
 
-        <p className="text-[#64748B]/70 text-[11px] mt-6 max-w-[460px]">
+        <p className="text-[#64748B]/70 text-[11px] mt-4 max-w-[460px]">
           Practice feedback on resume hygiene and recruiter-scan readiness — not a simulation of any specific
           company's actual ATS software.
         </p>
