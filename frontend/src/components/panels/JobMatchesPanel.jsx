@@ -163,6 +163,15 @@ export default function JobMatchesPanel({ data }) {
         )}
       </div>
 
+      {hasMatchData && (
+        <p className="text-[#64748B] text-xs leading-relaxed -mt-4">
+          Match % is a deterministic semantic-similarity score between your resume and each posting — not a
+          score computed by that employer's actual hiring system. Real ATS platforms generally don't expose a
+          match percentage like this at all; treat it as a consistent way to rank these listings against each
+          other, not a guarantee of how any specific employer will evaluate you.
+        </p>
+      )}
+
       {sortedJobs.length > 0 ? (
         <>
           <div className="divide-y divide-[#E2E8F0]">

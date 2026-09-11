@@ -1,19 +1,44 @@
-import React, { useState, useRef } from "react";
-import { analyzeResume } from "../api/client";
+import React, { useState, useRef, useEffect } from "react";
+import { analyzeResume, fetchIndustries } from "../api/client";
 
 /**
  * Upload — graded-paper system. Same functionality as before (drag/drop,
  * validation, optional JD field), rebuilt visually: thin hairline dropzone
  * instead of a dashed gold border, quiet ink button instead of a gold pill.
+ *
+ * Industry/background dropdown added above the dropzone (per explicit
+ * placement request — "before the resume upload step"). Fetched once from
+ * GET /industries rather than hardcoded, so the taxonomy stays the single
+ * source of truth on both ends. "general" (the default, always-first
+ * option) sends nothing extra to the backend — see client.js's
+ * analyzeResume/reanalyzeResume, which both skip the industry field
+ * entirely when it's "general", identical to the pre-feature request shape.
  */
-export default function Upload({ onResult, onLoadingChange, jobDescription = "", onJobDescriptionChange }) {
+export default function Upload({ onResult, onLoadingChange, jobDescription = "", onJobDescriptionChange, industry = "general", onIndustryChange }) {
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showJobDescription, setShowJobDescription] = useState(false);
+  const [industries, setIndustries] = useState([{ id: "general", label: "General / Tech" }]);
+  const [industriesLoadFailed, setIndustriesLoadFailed] = useState(false);
 
   const inputRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchIndustries()
+      .then((list) => {
+        if (!cancelled && list.length > 0) setIndustries(list);
+      })
+      .catch(() => {
+        // Non-fatal — the dropdown just falls back to "General / Tech" only,
+        // which is functionally identical to not selecting an industry at
+        // all, so this never blocks the person from analyzing their resume.
+        if (!cancelled) setIndustriesLoadFailed(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -81,7 +106,7 @@ export default function Upload({ onResult, onLoadingChange, jobDescription = "",
     setError(null);
 
     try {
-      const response = await analyzeResume(file, jobDescription);
+      const response = await analyzeResume(file, jobDescription, industry);
       if (onResult) onResult(response, file.name);
     } catch (err) {
       setError(err.message || "An unexpected error occurred during resume analysis.");
@@ -102,6 +127,31 @@ export default function Upload({ onResult, onLoadingChange, jobDescription = "",
   return (
     <div className="w-full">
       <form onSubmit={handleSubmit} className="space-y-3">
+
+        <div>
+          <label htmlFor="industry-select" className="block text-[11px] font-medium text-[#0F172A] mb-1">
+            Industry / background <span className="text-[#64748B]">(optional)</span>
+          </label>
+          <select
+            id="industry-select"
+            value={industry}
+            onChange={(e) => onIndustryChange && onIndustryChange(e.target.value)}
+            disabled={loading}
+            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] focus:border-[#0F172A] rounded-sm text-[#0F172A] text-[11px] px-2.5 py-2 outline-none"
+          >
+            {industries.map((ind) => (
+              <option key={ind.id} value={ind.id}>{ind.label}</option>
+            ))}
+          </select>
+          {industry !== "general" && (
+            <p className="text-[#0F172A] text-[10px] font-medium mt-1">
+              ✓ Keyword matching will also credit {industries.find((i) => i.id === industry)?.label || industry}-specific terms.
+            </p>
+          )}
+          {industriesLoadFailed && (
+            <p className="text-[#64748B] text-[10px] mt-1">Couldn't load the full industry list — General / Tech is still available.</p>
+          )}
+        </div>
 
         <div
           onDragEnter={handleDrag}

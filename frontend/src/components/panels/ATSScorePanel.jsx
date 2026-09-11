@@ -82,10 +82,22 @@ const calculatePercentile = (score, benchmarks) => {
  * pen, since that's literally what this feature does. No progress-ring
  * gauge, no confetti — the circle-draw is the restrained celebratory beat.
  */
-export default function ATSScorePanel({ data, resumeText, previousScore, scoreDelta }) {
+export default function ATSScorePanel({ data, resumeText, onResumeUpdate, onReAnalyze, previousScore, scoreDelta, jdAlignment }) {
   const [displayScore, setDisplayScore] = useState(0);
   const [markerPosition, setMarkerPosition] = useState(0);
   const [breakdownExpanded, setBreakdownExpanded] = useState(true);
+
+  const [showEditResume, setShowEditResume] = useState(false);
+  const [editedResumeText, setEditedResumeText] = useState(resumeText || "");
+  const [reAnalyzing, setReAnalyzing] = useState(false);
+
+  // Keep the edit box in sync if resumeText changes from outside this panel
+  // (a fresh upload, or a re-analysis completing and updating Dashboard's
+  // resumeText state) — without this, editing here after either of those
+  // events would silently operate on stale text.
+  useEffect(() => {
+    setEditedResumeText(resumeText || "");
+  }, [resumeText]);
 
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -99,6 +111,32 @@ export default function ATSScorePanel({ data, resumeText, previousScore, scoreDe
     setExplainerDismissed(true);
     saveJSON(STORAGE_KEYS.ATS_EXPLAINER_DISMISSED, true);
   };
+
+  const MIN_RESUME_LENGTH = 100; // matches the backend's own /reanalyze validation, checked client-side for instant feedback instead of a round-trip 422
+
+  const handleEditedTextChange = (val) => {
+    setEditedResumeText(val);
+    if (onResumeUpdate) onResumeUpdate(val); // live-sync into Dashboard's resumeText state as the user types
+  };
+
+  const handleReAnalyzeClick = async () => {
+    if (!onReAnalyze) return; // defensive — this panel can be rendered without these callbacks in other contexts
+    setReAnalyzing(true);
+    try {
+      await onReAnalyze(editedResumeText);
+      // Dashboard's handleReAnalyze already manages its own toast/error
+      // alert — this local state is only for disabling the button/showing
+      // a spinner right here while the request is in flight.
+    } finally {
+      setReAnalyzing(false);
+    }
+  };
+
+  const canReAnalyze =
+    !!onReAnalyze &&
+    !reAnalyzing &&
+    editedResumeText.trim().length >= MIN_RESUME_LENGTH &&
+    editedResumeText.trim() !== (resumeText || "").trim();
 
   if (!data) {
     return (
@@ -251,6 +289,13 @@ export default function ATSScorePanel({ data, resumeText, previousScore, scoreDe
           <p className="text-[#64748B] text-sm leading-relaxed max-w-lg">
             Scored against 11 explicit rules — keyword match, section headings, quantified achievements, and more.
           </p>
+          <p className="text-[#64748B] text-xs leading-relaxed max-w-lg">
+            Worth knowing: most real ATS platforms (Workday, Greenhouse, iCIMS, etc.) don't compute or show a
+            pass/fail match score at all — they're primarily searchable databases, and only a small share of
+            recruiters have any automatic content-based rejection configured. Treat this score as practice
+            feedback on resume-parsing hygiene and the kind of fast scan a real recruiter does, not a guarantee
+            about how any specific company's system will treat your resume.
+          </p>
           {confidenceStyle && confidence_reason && (
             <p className={`text-xs leading-relaxed max-w-lg ${confidence === "low" ? "text-[#2563EB]" : "text-[#64748B]"}`}>
               {confidence === "low" ? "⚠ " : ""}{confidence_reason}
@@ -262,15 +307,123 @@ export default function ATSScorePanel({ data, resumeText, previousScore, scoreDe
         </div>
       </div>
 
+      {onReAnalyze && (
+        <div className="border-t border-[#E2E8F0] pt-5">
+          <button
+            type="button"
+            onClick={() => setShowEditResume((prev) => !prev)}
+            className="text-[13px] font-medium text-[#0F172A] hover:text-[#2563EB] transition"
+          >
+            {showEditResume ? "Hide" : "Edit resume text & re-score"} {showEditResume ? "▲" : "▼"}
+          </button>
+          {showEditResume && (
+            <div className="mt-3 space-y-3 animate-fadeIn">
+              <p className="text-[#64748B] text-xs leading-relaxed">
+                Made a change based on the feedback above? Edit the extracted text directly and re-run the full
+                analysis — this calls the same scoring pipeline again on the updated text.
+              </p>
+              <textarea
+                value={editedResumeText}
+                onChange={(e) => handleEditedTextChange(e.target.value)}
+                disabled={reAnalyzing}
+                rows={10}
+                className="w-full bg-[#F8FAFC] border border-[#E2E8F0] focus:border-[#0F172A] rounded-sm text-[#0F172A] text-[13px] leading-relaxed p-3 resize-y outline-none font-mono"
+              />
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={handleReAnalyzeClick}
+                  disabled={!canReAnalyze}
+                  className={`text-sm font-semibold transition ${canReAnalyze ? "text-[#0F172A] hover:text-[#2563EB] cursor-pointer" : "text-[#64748B]/40 cursor-not-allowed"}`}
+                >
+                  {reAnalyzing ? "Re-scoring…" : "Re-score with these changes →"}
+                </button>
+                {editedResumeText.trim().length > 0 && editedResumeText.trim().length < MIN_RESUME_LENGTH && (
+                  <span className="text-[#2563EB] text-xs">Needs at least {MIN_RESUME_LENGTH} characters ({editedResumeText.trim().length} now)</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {!explainerDismissed && (
-        <div className="bg-[#0F172A]/[0.03] border-l-2 border-[#0F172A] pl-5 pr-5 py-4 flex items-start gap-4 animate-fadeIn">
-          <div className="flex-1 space-y-1.5">
-            <p className="text-[#0F172A] text-sm font-semibold">How this score is calculated</p>
-            <p className="text-[#64748B] text-sm leading-relaxed max-w-2xl">
-              Your resume is scored against 11 explicit rules — expand "Why This Score?" below to see the exact points awarded per rule. Scoring is intentionally strict, calibrated like real ATS/recruiter screening, so scores above 90 are rare. If a specific calibration rule applied to your resume, it's called out below.
-            </p>
+        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-sm p-6 animate-fadeIn">
+          <div className="flex justify-between items-baseline text-xs mb-2">
+            <span className="text-[#64748B] font-semibold uppercase tracking-wide">Resume vs Peers</span>
+            <div className="flex items-center gap-3">
+              <span className="text-[#64748B]" style={mono}>{roleCategory} applicants · estimate</span>
+              <button onClick={dismissExplainer} className="text-[#64748B] hover:text-[#0F172A] text-xs font-semibold flex-shrink-0 transition">Got it ✕</button>
+            </div>
           </div>
-          <button onClick={dismissExplainer} className="text-[#64748B] hover:text-[#0F172A] text-xs font-semibold flex-shrink-0 transition">Got it ✕</button>
+          <h4 className="text-[#0F172A] text-base font-medium mb-1" style={serif}>
+            Estimated to be better than {percentile}% of {roleCategory} applicants
+          </h4>
+          <p className="text-[#64748B] text-[11px] leading-relaxed mb-6">
+            An illustrative estimate based on your score and typical {roleCategory} score ranges — not measured against
+            real applicant data, so treat it as a rough guide rather than a statistic.
+          </p>
+
+          <div className="relative w-full h-10 mb-2">
+            <div style={{ left: `${benchmarks.p50}%` }} className="absolute top-0 -translate-x-1/2 flex flex-col items-center">
+              <div className="w-px h-2 bg-[#64748B]" />
+              <span className="text-[10px] text-[#64748B] mt-2 whitespace-nowrap select-none" style={mono}>Avg {benchmarks.p50}</span>
+            </div>
+            <div style={{ left: `${benchmarks.p75}%` }} className="absolute top-0 -translate-x-1/2 flex flex-col items-center">
+              <div className="w-px h-2 bg-[#64748B]" />
+              <span className="text-[10px] text-[#64748B] mt-2 whitespace-nowrap select-none" style={mono}>Strong {benchmarks.p75}</span>
+            </div>
+            <div style={{ left: `${benchmarks.p90}%` }} className="absolute top-0 -translate-x-1/2 flex flex-col items-center">
+              <div className="w-px h-2 bg-[#64748B]" />
+              <span className="text-[10px] text-[#64748B] mt-2 whitespace-nowrap select-none" style={mono}>Top 10% {benchmarks.p90}</span>
+            </div>
+
+            <div className="absolute top-[2px] left-0 w-full h-[3px] bg-[#F1F5F9]" />
+
+            <div style={{ left: `${markerPosition}%`, transition: "left 1.2s cubic-bezier(0.25, 0.8, 0.25, 1)" }} className="absolute top-[-14px] -translate-x-1/2 flex flex-col items-center pointer-events-none">
+              <span className="text-[10px] font-semibold text-[#2563EB] mb-1">You</span>
+              <div className="w-2 h-2 rounded-full bg-[#2563EB]" />
+            </div>
+          </div>
+
+          <p className="text-xs text-[#64748B] leading-relaxed mt-3">{adviceText}</p>
+        </div>
+      )}
+
+      {jdAlignment && (
+        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-sm p-6 animate-fadeIn">
+          <div className="flex justify-between items-baseline text-xs mb-2">
+            <span className="text-[#64748B] font-semibold uppercase tracking-wide">Target Job Alignment</span>
+            <span className="text-[#64748B]" style={mono}>deterministic · embedding similarity</span>
+          </div>
+          <h4 className="text-[#0F172A] text-base font-medium mb-1" style={serif}>
+            {jdAlignment.alignment_pct}% semantic alignment with your pasted job description
+          </h4>
+          <p className="text-[#64748B] text-[11px] leading-relaxed mb-4">
+            Computed via embedding similarity between your resume and the job description — deterministic, not an
+            LLM's subjective read. Not a score any real employer's ATS would show you; treat it as a self-check.
+          </p>
+
+          {(jdAlignment.matched_requirements?.length > 0 || jdAlignment.missing_requirements?.length > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-[#E2E8F0] pt-4">
+              <div>
+                <div className="text-[10px] font-semibold text-[#0D9488] uppercase tracking-wide mb-2">
+                  Matched ({jdAlignment.matched_requirements?.length || 0})
+                </div>
+                {(jdAlignment.matched_requirements || []).map((req, i) => (
+                  <div key={i} className="text-xs text-[#0F172A] py-1"><span className="text-[#0D9488] mr-1.5">+</span>{req}</div>
+                ))}
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold text-[#2563EB] uppercase tracking-wide mb-2">
+                  Missing ({jdAlignment.missing_requirements?.length || 0})
+                </div>
+                {(jdAlignment.missing_requirements || []).map((req, i) => (
+                  <div key={i} className="text-xs text-[#64748B] py-1"><span className="text-[#2563EB] mr-1.5">−</span>{req}</div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -323,44 +476,6 @@ export default function ATSScorePanel({ data, resumeText, previousScore, scoreDe
           )}
         </div>
       )}
-
-      <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-sm p-6">
-        <div className="flex justify-between items-baseline text-xs mb-2">
-          <span className="text-[#64748B] font-semibold uppercase tracking-wide">Resume vs Peers</span>
-          <span className="text-[#64748B]" style={mono}>{roleCategory} applicants · estimate</span>
-        </div>
-        <h4 className="text-[#0F172A] text-base font-medium mb-1" style={serif}>
-          Estimated to be better than {percentile}% of {roleCategory} applicants
-        </h4>
-        <p className="text-[#64748B] text-[11px] leading-relaxed mb-6">
-          An illustrative estimate based on your score and typical {roleCategory} score ranges — not measured against
-          real applicant data, so treat it as a rough guide rather than a statistic.
-        </p>
-
-        <div className="relative w-full h-10 mb-2">
-          <div style={{ left: `${benchmarks.p50}%` }} className="absolute top-0 -translate-x-1/2 flex flex-col items-center">
-            <div className="w-px h-2 bg-[#64748B]" />
-            <span className="text-[10px] text-[#64748B] mt-2 whitespace-nowrap select-none" style={mono}>Avg {benchmarks.p50}</span>
-          </div>
-          <div style={{ left: `${benchmarks.p75}%` }} className="absolute top-0 -translate-x-1/2 flex flex-col items-center">
-            <div className="w-px h-2 bg-[#64748B]" />
-            <span className="text-[10px] text-[#64748B] mt-2 whitespace-nowrap select-none" style={mono}>Strong {benchmarks.p75}</span>
-          </div>
-          <div style={{ left: `${benchmarks.p90}%` }} className="absolute top-0 -translate-x-1/2 flex flex-col items-center">
-            <div className="w-px h-2 bg-[#64748B]" />
-            <span className="text-[10px] text-[#64748B] mt-2 whitespace-nowrap select-none" style={mono}>Top 10% {benchmarks.p90}</span>
-          </div>
-
-          <div className="absolute top-[2px] left-0 w-full h-[3px] bg-[#F1F5F9]" />
-
-          <div style={{ left: `${markerPosition}%`, transition: "left 1.2s cubic-bezier(0.25, 0.8, 0.25, 1)" }} className="absolute top-[-14px] -translate-x-1/2 flex flex-col items-center pointer-events-none">
-            <span className="text-[10px] font-semibold text-[#2563EB] mb-1">You</span>
-            <div className="w-2 h-2 rounded-full bg-[#2563EB]" />
-          </div>
-        </div>
-
-        <p className="text-xs text-[#64748B] leading-relaxed mt-3">{adviceText}</p>
-      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
         <div className="space-y-3">

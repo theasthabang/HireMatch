@@ -1,8 +1,69 @@
 /**
  * API client for communicating with the Resume Analyzer backend.
+ *
+ * Every request now goes through apiFetch() instead of calling fetch()
+ * directly — it attaches `Authorization: Bearer <clerk token>` and handles
+ * an expired/invalid session the same way everywhere, instead of each
+ * function reimplementing that.
  */
 
 const BACKEND_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
+// ---------------------------------------------------------------------------
+// Token wiring.
+// ---------------------------------------------------------------------------
+// client.js is a plain module, not a React component — it can't call
+// useAuth() itself. Instead, <AuthTokenBridge/> (a component rendered once
+// near the app root, inside ClerkProvider) calls useAuth().getToken() and
+// hands the function itself in here via registerTokenGetter(). Every
+// exported function below then calls that stored function right before
+// each request, so the token is always freshly fetched (Clerk's getToken()
+// returns a cached token and transparently refreshes it only when it's
+// actually close to expiring — callers never need to think about that).
+let _getToken = null;
+
+export function registerTokenGetter(getTokenFn) {
+  _getToken = getTokenFn;
+}
+
+async function authHeaders() {
+  if (!_getToken) return {};
+  try {
+    const token = await _getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch (err) {
+    // getToken() itself throwing (e.g. session genuinely gone) shouldn't
+    // crash the caller — proceed with no auth header, which the backend
+    // will correctly turn into a 401, handled uniformly below.
+    console.warn("Could not retrieve Clerk session token:", err);
+    return {};
+  }
+}
+
+/**
+ * Shared fetch wrapper: attaches the auth header, and on a 401 redirects
+ * to /sign-in instead of letting the caller's .then()/JSON-parsing code
+ * blow up on an auth error it has no way to handle sensibly. Every
+ * exported function in this file should call this instead of fetch()
+ * directly.
+ */
+async function apiFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}), ...(await authHeaders()) };
+  const response = await fetch(`${BACKEND_URL}${path}`, { ...options, headers });
+
+  if (response.status === 401) {
+    // Missing/expired/invalid session — there's no graceful in-page
+    // recovery from this (the backend has already rejected the request),
+    // so send the user to sign back in rather than surfacing a raw
+    // "Analysis failed" error for what's actually an auth problem.
+    window.location.href = "/sign-in";
+    // Throw so the caller's own error handling doesn't ALSO run and show
+    // a second, confusing error message during the redirect.
+    throw new Error("Session expired. Redirecting to sign-in…");
+  }
+
+  return response;
+}
 
 /**
  * Extracts a user-friendly error message from a failed fetch Response.
@@ -26,15 +87,27 @@ async function extractErrorMessage(response, fallbackPrefix) {
 }
 
 /**
- * Uploads a resume file and triggers the parallel LLM analysis.
- * 
- * @param {File} file - The resume PDF or DOCX file to analyze.
- * @param {string} [jobDescription] - Optional target job description. When provided,
- *   ATS/Skills/Rewrite/Cover Letter are tailored to this specific posting.
- * @returns {Promise<Object>} The analysis response containing ats, skills, jobs, rewrite, and cover_letter data.
- * @throws {Error} If no file is provided, or the network request fails.
+ * Fetches the list of selectable industries/backgrounds for the dropdown
+ * shown before upload. "general" is always first — selecting it (or never
+ * calling this at all) means zero taxonomy involvement, identical to the
+ * app's behavior before this feature existed.
+ *
+ * Not auth-gated on the backend (GET /industries is a public route), but
+ * still goes through apiFetch for consistency — the auth header is simply
+ * ignored server-side if present.
+ *
+ * @returns {Promise<Array<{id: string, label: string}>>}
  */
-export async function analyzeResume(file, jobDescription) {
+export async function fetchIndustries() {
+  const response = await apiFetch("/industries");
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response, "Fetching industries"));
+  }
+  const data = await response.json();
+  return data.industries || [];
+}
+
+export async function analyzeResume(file, jobDescription, industry) {
   if (!file) {
     throw new Error("No file provided. Please upload a valid PDF or DOCX resume.");
   }
@@ -44,8 +117,11 @@ export async function analyzeResume(file, jobDescription) {
   if (jobDescription && jobDescription.trim()) {
     formData.append("job_description", jobDescription.trim());
   }
+  if (industry && industry !== "general") {
+    formData.append("industry", industry);
+  }
 
-  const response = await fetch(`${BACKEND_URL}/analyze`, {
+  const response = await apiFetch("/analyze", {
     method: "POST",
     body: formData,
     // Note: Do not set Content-Type header manually.
@@ -61,17 +137,17 @@ export async function analyzeResume(file, jobDescription) {
 
 /**
  * Sends updated resume text directly to the /reanalyze endpoint.
- * 
+ *
  * @param {string} resumeText - The plain text of the resume to re-analyze.
  * @param {string} [jobDescription] - Optional target job description, same tailoring behavior as analyzeResume.
  * @returns {Promise<Object>} The updated analysis response.
  */
-export async function reanalyzeResume(resumeText, jobDescription) {
+export async function reanalyzeResume(resumeText, jobDescription, industry) {
   if (!resumeText) {
     throw new Error("No resume text provided.");
   }
 
-  const response = await fetch(`${BACKEND_URL}/reanalyze`, {
+  const response = await apiFetch("/reanalyze", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -79,6 +155,7 @@ export async function reanalyzeResume(resumeText, jobDescription) {
     body: JSON.stringify({
       resume_text: resumeText,
       job_description: jobDescription && jobDescription.trim() ? jobDescription.trim() : null,
+      industry: industry && industry !== "general" ? industry : null,
     }),
   });
 
@@ -91,8 +168,8 @@ export async function reanalyzeResume(resumeText, jobDescription) {
 
 /**
  * Asks a follow-up question about an already-computed ATS score.
- * Stateless on the backend — pass the running conversation history each call
- * so the answer stays coherent across turns.
+ * Stateless on the backend — pass the running conversation history each
+ * call so the answer stays coherent across turns.
  *
  * @param {Object} atsSummary - The ats object from the analysis response (score, rule_scores, verdict, calibration_notes, etc.)
  * @param {string} question - The user's follow-up question.
@@ -105,7 +182,7 @@ export async function askAboutScore(atsSummary, question, resumeText, history) {
     throw new Error("Please enter a question.");
   }
 
-  const response = await fetch(`${BACKEND_URL}/ats/ask`, {
+  const response = await apiFetch("/ats/ask", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -130,11 +207,6 @@ export async function askAboutScore(atsSummary, question, resumeText, history) {
  * Requests a downloadable .docx built from the summary/bullets the user has
  * already accepted in the Rewrite panel, and triggers a browser download.
  *
- * No AI generation happens here — this renders exactly the content already
- * reviewed on screen (see resume_export.py's docstring on the backend) —
- * so unlike the other client.js functions there's no new AI-content risk
- * to surface as an error state beyond a plain network/render failure.
- *
  * @param {Object} params
  * @param {string} [params.fullName] - Candidate's name for the doc header, if known.
  * @param {string} [params.contactLine] - Optional single line of contact info.
@@ -146,7 +218,7 @@ export async function exportResumeDocx({ fullName, contactLine, summary, bullets
     throw new Error("Nothing to export yet — accept a summary or at least one bullet first.");
   }
 
-  const response = await fetch(`${BACKEND_URL}/export/resume`, {
+  const response = await apiFetch("/export/resume", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -180,9 +252,14 @@ export async function exportResumeDocx({ fullName, contactLine, summary, bullets
   link.remove();
   window.URL.revokeObjectURL(url);
 }
- /**
-* Fire-and-forget from the UI's perspective — callers should not block on
+
+/**
+ * Records a thumbs up/down on a specific AI-generated suggestion.
+ * Fire-and-forget from the UI's perspective — callers should not block on
  * this or treat a failure as fatal to the surrounding feature.
+ *
+ * Not auth-gated on the backend (feedback stays anonymous by design), but
+ * still routed through apiFetch for consistency.
  *
  * @param {string} feature - Which feature this is about, e.g. 'ats_tip', 'ats_overall', 'interview_question'.
  * @param {'up'|'down'} rating
@@ -192,7 +269,7 @@ export async function exportResumeDocx({ fullName, contactLine, summary, bullets
  * @param {Object} [options.context] - Optional small snapshot of the item being rated.
  */
 export async function submitFeedback(feature, rating, { itemId, comment, context } = {}) {
-  const response = await fetch(`${BACKEND_URL}/feedback`, {
+  const response = await apiFetch("/feedback", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

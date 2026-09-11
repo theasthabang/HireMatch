@@ -96,11 +96,11 @@ class JobMatch(BaseAnalysisModel):
     title: str = Field(..., description="The job title or role evaluated.")
     match_pct: int = Field(
         ..., 
-        description="Estimated match percentage from 0 to 100, weighted toward required (not nice-to-have) skills."
+        description="Deterministic embedding-similarity match percentage from 0 to 100 between resume and job description (see compute_embedding_match_pcts in chains.py) — not an LLM's subjective estimate."
     )
     why: str = Field(
         ..., 
-        description="Explanation or justification for the match percentage, citing specific resume evidence."
+        description="LLM-generated explanation citing specific resume evidence for why requirements are matched/missing — the qualitative reasoning behind (not the source of) the match_pct above."
     )
     matched_requirements: List[str] = Field(
         default_factory=list,
@@ -133,7 +133,7 @@ class LiveJob(BaseAnalysisModel):
     )
     match_pct: Optional[int] = Field(
         default=None,
-        description="LLM-scored match percentage for this specific listing against the candidate's resume, weighted toward required skills. None if scoring wasn't available for this listing."
+        description="Deterministic embedding-similarity match percentage for this listing against the candidate's resume (see compute_embedding_match_pcts in chains.py) — not an LLM's subjective estimate. None if scoring wasn't available for this listing."
     )
     match_why: Optional[str] = Field(
         default=None,
@@ -241,6 +241,24 @@ class CoverLetterResult(BaseAnalysisModel):
         description="True if this letter was written against a specific pasted job description rather than generically from the resume alone."
     )
 
+class JDAlignmentResult(BaseAnalysisModel):
+    """
+    Deterministic, embedding-based alignment between the resume and an
+    optional pasted target job description — computed via cosine similarity
+    (see compute_jd_alignment in chains.py), NOT an LLM's subjective
+    judgment. Same resume + same JD always produces the same result.
+
+    Only populated when a job description was provided AND the embeddings
+    call succeeded; None otherwise (the tailored chains still work via their
+    own prompt-level reasoning in that case — this is an additive signal,
+    not a hard dependency).
+    """
+    alignment_pct: int = Field(..., description="0-100 deterministic semantic similarity between resume and job description as a whole.")
+    matched_requirements: List[str] = Field(default_factory=list, description="JD requirement lines with embedding-similarity evidence found in the resume.")
+    missing_requirements: List[str] = Field(default_factory=list, description="JD requirement lines with no embedding-similarity evidence found in the resume.")
+    method: str = Field(default="embedding_similarity", description="How this was computed — always 'embedding_similarity', included so the frontend/API consumers never have to guess.")
+
+
 class AnalysisResponse(BaseAnalysisModel):
     """Top-level unified analysis response wrapping all sub-component analysis models.
     
@@ -289,6 +307,18 @@ class AnalysisResponse(BaseAnalysisModel):
     tailored_for: Optional[str] = Field(
         default=None,
         description="Short echo of the job description used for tailoring (truncated), shown in the UI so the user can confirm what they tailored against."
+    )
+    jd_alignment: Optional[JDAlignmentResult] = Field(
+        default=None,
+        description="Deterministic embedding-based resume-to-JD alignment score and requirement breakdown. None if no job description was provided or the embeddings call failed."
+    )
+    is_industry_tailored: bool = Field(
+        default=False,
+        description="True if the ATS and Skills chains were grounded with industry-specific reference terms from an explicitly selected industry/background (see GET /industries)."
+    )
+    industry: Optional[str] = Field(
+        default=None,
+        description="The industry id (e.g. 'finance') used for grounding, if is_industry_tailored is True. None otherwise."
     )
 
 class AtsFollowupTurn(BaseAnalysisModel):

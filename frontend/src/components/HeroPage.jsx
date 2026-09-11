@@ -14,14 +14,14 @@ export default function HeroPage({ onStart }) {
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] text-[#0F172A] font-sans">
 
-      <header className="w-full max-w-[1000px] mx-auto px-6 py-8 flex items-center justify-between">
+      <header className="w-full max-w-[1000px] mx-auto px-6 py-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 bg-[#2563EB] flex-shrink-0" />
           <span className="text-lg font-medium" style={serif}>HireMatch</span>
         </div>
       </header>
 
-      <main className="flex-grow flex flex-col items-center justify-center text-center px-6 py-16 max-w-[900px] mx-auto w-full">
+      <main className="flex-grow flex flex-col items-center justify-center text-center px-6 py-8 max-w-[900px] mx-auto w-full">
         <div className="text-[11px] font-semibold text-[#64748B] uppercase tracking-[0.15em] mb-8" style={mono}>
           AI resume analysis, scored explicitly
         </div>
@@ -41,6 +41,11 @@ export default function HeroPage({ onStart }) {
         >
           Analyze my resume →
         </button>
+
+        <p className="text-[#64748B]/70 text-[11px] mt-4 max-w-[460px]">
+          Practice feedback on resume hygiene and recruiter-scan readiness — not a simulation of any specific
+          company's actual ATS software.
+        </p>
       </main>
 
       <div className="w-full pb-16">

@@ -24,13 +24,24 @@ export default function Dashboard({ onReset }) {
   const [resumeText, setResumeText] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.resumeText ?? "");
   const [showToast, setShowToast] = useState(false);
   const [jobDescription, setJobDescription] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.jobDescription ?? "");
+  const [industry, setIndustry] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.industry ?? "general");
   const [completedWeeks, setCompletedWeeks] = useState(() => loadJSON(STORAGE_KEYS.SESSION, {})?.completedWeeks ?? []);
   const [previousAtsScore, setPreviousAtsScore] = useState(null);
   const [scoreDelta, setScoreDelta] = useState(null);
 
+  // True only when the currently-shown `results` came from localStorage on
+  // initial page load, not from a live analysis run in this session. Without
+  // this, opening the app fresh silently shows last session's saved score
+  // with zero visual difference from a real, just-completed analysis —
+  // genuinely confusing since nothing was actually uploaded/analyzed this
+  // time. Flips to false the moment a real analyze/re-analyze completes.
+  const [isRestoredSession, setIsRestoredSession] = useState(
+    () => !!(loadJSON(STORAGE_KEYS.SESSION, {})?.results)
+  );
+
   useEffect(() => {
-    saveJSON(STORAGE_KEYS.SESSION, { results, resumeText, jobDescription, completedWeeks, activeTab });
-  }, [results, resumeText, jobDescription, completedWeeks, activeTab]);
+    saveJSON(STORAGE_KEYS.SESSION, { results, resumeText, jobDescription, industry, completedWeeks, activeTab });
+  }, [results, resumeText, jobDescription, industry, completedWeeks, activeTab]);
 
   const handleResult = (data, filename) => {
     setResults(data);
@@ -38,6 +49,7 @@ export default function Dashboard({ onReset }) {
     setCompletedWeeks([]);
     setPreviousAtsScore(null);
     setScoreDelta(null);
+    setIsRestoredSession(false); // this is a real, fresh analysis — no longer "restored"
   };
 
   const handleResumeUpdate = (updatedText) => setResumeText(updatedText);
@@ -46,9 +58,10 @@ export default function Dashboard({ onReset }) {
     setShowToast(true);
     const scoreBefore = results?.ats?.score;
     try {
-      const response = await reanalyzeResume(updatedText, jobDescription);
+      const response = await reanalyzeResume(updatedText, jobDescription, industry);
       setResults(response);
       setResumeText(response?.resume_text || updatedText);
+      setIsRestoredSession(false); // fresh re-analysis — no longer "restored"
       const scoreAfter = response?.ats?.score;
       if (typeof scoreBefore === "number" && typeof scoreAfter === "number") {
         setPreviousAtsScore(scoreBefore);
@@ -75,6 +88,7 @@ export default function Dashboard({ onReset }) {
       setPreviousAtsScore(null);
       setScoreDelta(null);
       setActiveTab("ats");
+      setIsRestoredSession(false);
     }
   };
 
@@ -98,6 +112,7 @@ export default function Dashboard({ onReset }) {
             onReAnalyze={handleReAnalyze}
             previousScore={previousAtsScore}
             scoreDelta={scoreDelta}
+            jdAlignment={results?.jd_alignment}
           />
         );
       case "skills":
@@ -153,7 +168,7 @@ export default function Dashboard({ onReset }) {
               <h3 className="text-sm font-semibold text-[#0F172A]">Upload resume</h3>
               <p className="text-[#64748B] text-xs mt-0.5">PDF or DOCX, up to 5MB</p>
             </div>
-            <Upload onResult={handleResult} onLoadingChange={setLoading} jobDescription={jobDescription} onJobDescriptionChange={setJobDescription} />
+            <Upload onResult={handleResult} onLoadingChange={setLoading} jobDescription={jobDescription} onJobDescriptionChange={setJobDescription} industry={industry} onIndustryChange={setIndustry} />
           </div>
 
           <div className="space-y-2.5 border-t border-[#E2E8F0] pt-5">
@@ -216,7 +231,7 @@ export default function Dashboard({ onReset }) {
               <div className="bg-[#2563EB]/[0.04] border-l-2 border-[#2563EB] pl-4 pr-4 py-3 flex gap-3">
                 <span className="text-[#2563EB] flex-shrink-0 font-semibold" style={mono}>01</span>
                 <span className="text-[#64748B] text-[13px] leading-relaxed">
-                  An <span className="text-[#0F172A] font-medium">ATS score out of 100</span>, scored strictly against 11 explicit rules — not a black box. Every rule's reasoning is shown, and the score is intentionally hard to max out, similar to real recruiter screening.
+                  An <span className="text-[#0F172A] font-medium">ATS score out of 100</span>, scored strictly against 11 explicit rules — not a black box, every rule's reasoning is shown. This is a resume-hygiene practice score modeled on a fast recruiter scan, not a simulation of any specific company's actual ATS software — most real ATS platforms don't compute a match score at all.
                 </span>
               </div>
               <div className="bg-[#0D9488]/[0.05] border-l-2 border-[#0D9488] pl-4 pr-4 py-3 flex gap-3">
@@ -231,6 +246,30 @@ export default function Dashboard({ onReset }) {
           </div>
         ) : (
           <div className="space-y-8 flex flex-col flex-grow">
+            {isRestoredSession && (
+              <div className="flex items-center justify-between gap-4 flex-wrap bg-[#2563EB]/[0.05] border border-[#2563EB]/30 rounded-sm px-5 py-3 animate-fadeIn">
+                <p className="text-[#0F172A] text-[13px] leading-relaxed">
+                  <span className="font-semibold">Showing your last analysis</span>, saved in this browser — not a new
+                  result. Upload a resume above to run a fresh analysis.
+                </p>
+                <div className="flex items-center gap-4 flex-shrink-0">
+                  <button
+                    onClick={handleClearSavedAnalysis}
+                    className="text-[#2563EB] hover:text-[#0F172A] text-xs font-semibold transition"
+                  >
+                    Start fresh →
+                  </button>
+                  <button
+                    onClick={() => setIsRestoredSession(false)}
+                    className="text-[#64748B] hover:text-[#0F172A] text-xs font-medium transition"
+                    aria-label="Dismiss"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between w-full gap-4 border-b border-[#E2E8F0] flex-wrap">
               {tabs.map((tab) => {
                 const isSelected = activeTab === tab.id;

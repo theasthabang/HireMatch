@@ -1,10 +1,5 @@
 /**
  * Safe localStorage wrapper.
- *
- * localStorage can throw (private/incognito mode with storage disabled,
- * storage quota exceeded, etc.) — every call here is wrapped so a storage
- * failure degrades to "nothing persists this session" instead of crashing
- * the app.
  */
 
 export function loadJSON(key, fallback = null) {
@@ -36,8 +31,7 @@ export function removeKey(key) {
   }
 }
 
-// Centralized keys so every consumer references the same string.
 export const STORAGE_KEYS = {
-  SESSION: "resumeiq:session", // { results, resumeText, jobDescription, completedWeeks, activeTab }
+  SESSION: "resumeiq:session",
   ATS_EXPLAINER_DISMISSED: "resumeiq:onboarding:ats_explainer_dismissed",
 };

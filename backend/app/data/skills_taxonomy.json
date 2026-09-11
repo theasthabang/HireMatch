@@ -1,0 +1,120 @@
+{
+  "programming_languages": {
+    "category_type": "tech",
+    "weight": 1.0,
+    "skills": ["Python", "JavaScript", "TypeScript", "Java", "C", "C++", "C#", "Go", "Rust",
+      "Kotlin", "Swift", "PHP", "Ruby", "R", "MATLAB", "Scala", "Perl", "Dart",
+      "Objective-C", "Shell", "Bash", "PowerShell", "SQL", "HTML", "CSS",
+      "Assembly", "Julia", "Haskell", "Lua", "Groovy", "VB.NET"]
+  },
+  "frontend": {
+    "category_type": "tech",
+    "weight": 1.0,
+    "skills": ["React", "Angular", "Vue.js", "Svelte", "Next.js", "Nuxt.js", "Redux",
+      "Tailwind CSS", "Bootstrap", "jQuery", "Webpack", "Vite", "Sass", "SCSS",
+      "Material UI", "Ember.js", "Three.js", "D3.js", "WebSockets",
+      "Progressive Web Apps", "Web Components", "GraphQL", "Storybook"]
+  },
+  "backend": {
+    "category_type": "tech",
+    "weight": 1.0,
+    "skills": ["Node.js", "Express.js", "Django", "Flask", "FastAPI", "Spring Boot",
+      "ASP.NET Core", "Ruby on Rails", "Laravel", "NestJS", "GraphQL",
+      "REST API design", "gRPC", "Microservices", "Serverless Architecture",
+      "Kafka", "RabbitMQ", "SQS"]
+  },
+  "databases": {
+    "category_type": "tech",
+    "weight": 1.0,
+    "skills": ["MySQL", "PostgreSQL", "MongoDB", "Redis", "SQLite", "Oracle DB",
+      "Microsoft SQL Server", "Cassandra", "DynamoDB", "Elasticsearch", "Firebase",
+      "Neo4j", "MariaDB", "Supabase", "CouchDB", "InfluxDB"]
+  },
+  "cloud_devops": {
+    "category_type": "tech",
+    "weight": 1.0,
+    "skills": ["AWS", "Azure", "Google Cloud Platform", "Docker", "Kubernetes",
+      "Terraform", "Jenkins", "GitHub Actions", "GitLab CI/CD", "Ansible",
+      "CircleCI", "Helm", "Prometheus", "Grafana", "Nginx", "Apache",
+      "Linux Administration", "CloudFormation", "Vagrant", "Puppet", "Chef",
+      "CI/CD", "Site Reliability Engineering"]
+  },
+  "ai_ml_data": {
+    "category_type": "tech",
+    "weight": 1.0,
+    "skills": ["Machine Learning", "Deep Learning", "Natural Language Processing",
+      "Computer Vision", "TensorFlow", "PyTorch", "Scikit-learn", "Keras",
+      "Pandas", "NumPy", "LangChain", "Hugging Face Transformers", "OpenCV",
+      "XGBoost", "LightGBM", "Reinforcement Learning", "Generative AI",
+      "LLM Fine-tuning", "Prompt Engineering", "RAG", "Pinecone", "FAISS",
+      "Weaviate", "MLOps", "Feature Engineering", "Statistical Modeling",
+      "A/B Testing", "Time Series Analysis", "Matplotlib", "Seaborn", "Plotly",
+      "Tableau", "Power BI"]
+  },
+  "mobile": {
+    "category_type": "tech",
+    "weight": 1.0,
+    "skills": ["Android Development", "iOS Development", "React Native", "Flutter",
+      "SwiftUI", "Jetpack Compose", "Xamarin", "Ionic"]
+  },
+  "testing_qa": {
+    "category_type": "tech",
+    "weight": 0.9,
+    "skills": ["Unit Testing", "Integration Testing", "Selenium", "Cypress", "Jest",
+      "Mocha", "JUnit", "PyTest", "Test-Driven Development", "Postman",
+      "API Testing", "JMeter", "Manual QA"]
+  },
+  "tools": {
+    "category_type": "tech",
+    "weight": 0.8,
+    "skills": ["Git", "GitHub", "GitLab", "Bitbucket", "Jira", "Confluence", "Trello",
+      "Figma", "VS Code", "IntelliJ IDEA", "Notion"]
+  },
+  "security": {
+    "category_type": "tech",
+    "weight": 1.0,
+    "skills": ["Cybersecurity", "Penetration Testing", "OWASP", "Network Security",
+      "Cryptography", "Ethical Hacking", "Identity and Access Management",
+      "SOC Operations", "Vulnerability Assessment"]
+  },
+  "other_technical": {
+    "category_type": "tech",
+    "weight": 0.9,
+    "skills": ["Blockchain", "Solidity", "Web3", "IoT", "Embedded Systems",
+      "AR/VR Development", "Unity", "Unreal Engine", "Computer Networking",
+      "Operating Systems", "Compiler Design", "Distributed Systems", "System Design"]
+  },
+  "finance": {
+    "category_type": "industry",
+    "weight": 1.0,
+    "skills": ["Financial Modeling", "GAAP", "IFRS", "Bloomberg Terminal",
+      "Risk Management", "Equity Research", "Financial Analysis", "Forecasting",
+      "Budgeting", "Auditing", "Taxation", "Investment Banking", "Portfolio Management"]
+  },
+  "healthcare": {
+    "category_type": "industry",
+    "weight": 1.0,
+    "skills": ["Patient Care", "EMR Systems", "HIPAA Compliance", "Clinical Documentation",
+      "Medical Coding", "ICD-10", "Nursing", "Phlebotomy", "Pharmacology"]
+  },
+  "marketing": {
+    "category_type": "industry",
+    "weight": 1.0,
+    "skills": ["SEO", "SEM", "Campaign Management", "Adobe Creative Suite",
+      "Google Analytics", "Content Strategy", "Social Media Marketing",
+      "Email Marketing", "Brand Management", "Market Research"]
+  },
+  "soft_skills": {
+    "category_type": "soft",
+    "weight": 0.6,
+    "skills": ["Communication", "Leadership", "Teamwork", "Problem-Solving",
+      "Critical Thinking", "Time Management", "Adaptability", "Collaboration",
+      "Conflict Resolution", "Emotional Intelligence", "Creativity",
+      "Decision Making", "Negotiation", "Presentation Skills", "Public Speaking",
+      "Mentoring", "Active Listening", "Attention to Detail",
+      "Analytical Thinking", "Stakeholder Management", "Project Management",
+      "Agile", "Scrum", "Cross-functional Collaboration", "Client Management",
+      "Strategic Planning", "Work Ethic", "Resilience", "Growth Mindset",
+      "Delegation", "Feedback Handling", "Multitasking", "Prioritization"]
+  }
+}
